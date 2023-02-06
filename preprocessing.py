@@ -20,6 +20,13 @@ train_data_path = 'data/train'
 val_data_path = 'data/val/images'
 test_data_path = 'data/test/images'
 
+label_dict = dict()
+label_path_list = glob(os.path.join(train_data_path, '*'))
+label_path_list.sort()
+for i, path in enumerate(label_path_list):
+    label = os.path.split(path)[-1]
+    label_dict[label] = i
+
 train_path_list = glob(os.path.join(train_data_path, '*', 'images', '*'))
 train_path_list.sort()
 val_path_list = glob(os.path.join(val_data_path, '*'))
@@ -39,7 +46,8 @@ for i, path in enumerate(train_path_list):
     trn_images[i] = data
 
 trn_images = np.divide(trn_images - trn_mean, trn_std)
-trn_lables = [os.path.split(path)[-1][:9] for path in train_path_list]
+trn_lables_strings = [os.path.split(path)[-1][:9] for path in train_path_list]
+trn_lables = [label_dict[label] for label in trn_lables_strings]
 
 t2 = time.time()
 print('loaded train data', t2 - t1)
@@ -57,7 +65,8 @@ for i, tuple in enumerate(val_tuples):
     val_images[i] = data
 
 val_images = np.divide(val_images - val_mean, val_std)
-val_labels = [tuple[1] for tuple in val_tuples]
+val_labels_strings = [tuple[1] for tuple in val_tuples]
+val_labels = [label_dict[label] for label in val_labels_strings]
 
 t3 = time.time()
 print('loaded val data', t3 - t2)
