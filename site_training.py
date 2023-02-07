@@ -21,10 +21,10 @@ from utils.losses import SampleLoss
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
 log.setLevel(logging.INFO)
-log.setLevel(logging.DEBUG)
+# log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=None, comment=None, layer=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=None, comment=None, layer=None, sub_layer=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -53,11 +53,15 @@ class MultiSiteTrainingApp:
             self.args.comment = comment
         if layer is not None:
             self.args.layer = layer
+        if sub_layer is not None:
+            self.args.sub_layer = sub_layer
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
         self.logdir = os.path.join('./runs', self.args.logdir)
         os.makedirs(self.logdir, exist_ok=True)
+
+        self.dict_path = '/home/somahansel/work/imagenettest/saved_models/site1/imagenet_2023-02-07_03.20.48_lr5.best.state'
 
         self.trn_writer = None
         self.val_writer = None
@@ -70,7 +74,9 @@ class MultiSiteTrainingApp:
         if self.args.layer is not None:
             for i in range(self.args.site_number):
                 for name, param in self.models[i].named_parameters():
-                    if name.split('.')[1] == self.args.layer:
+                    layer = name.split('.')[1]
+                    sub_layer = name.split('.')[2]
+                    if layer == self.args.layer and sub_layer == self.args.sub_layer:
                         self.params_to_update[i].append(param)
         else:
             for i in range(self.args.site_number):
@@ -78,11 +84,11 @@ class MultiSiteTrainingApp:
                     self.params_to_update[i].append(param)
 
 
-        for i in range(self.args.site_number):
-            for param in self.models[i].parameters():
+        for model in self.models:
+            for param in model.parameters():
                 param.requires_grad = False
-        for i in range(self.args.site_number):
-            for param in self.params_to_update[i]:
+        for param_group in self.params_to_update:
+            for param in param_group:
                 param.requires_grad = True
         self.optims = self.initOptimizer()
 
@@ -93,10 +99,14 @@ class MultiSiteTrainingApp:
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:
-                for i in range(self.args.site_number):
-                    models[i] = nn.DataParallel(models[i])
-            for i in range(self.args.site_number):
-                models[i] = models[i].to(self.device)
+                for model in models:
+                    model = nn.DataParallel(model)
+            for model in models:
+                model = model.to(self.device)
+
+        if self.args.layer is not None:
+            for model in models:
+                model.load_state_dict(torch.load(self.dict_path), strict=False)
         return models
 
     def initOptimizer(self):
@@ -133,15 +143,16 @@ class MultiSiteTrainingApp:
         val_best = 1e8
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
-
-            log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
-                epoch_ndx,
-                self.args.epochs,
-                len(trn_dls[0]),
-                len(val_dl),
-                self.args.batch_size,
-                (torch.cuda.device_count() if self.use_cuda else 1),
-            ))
+            
+            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+                log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
+                    epoch_ndx,
+                    self.args.epochs,
+                    len(trn_dls[0]),
+                    len(val_dl),
+                    self.args.batch_size,
+                    (torch.cuda.device_count() if self.use_cuda else 1),
+                ))
 
             trnMetrics = torch.zeros(5, len(trn_dls[0]), device=self.device)
 
@@ -162,12 +173,13 @@ class MultiSiteTrainingApp:
             self.val_writer.close()
 
     def doTraining(self, epoch_ndx, train_dls):
-        trnMetrics = torch.zeros(5, len(train_dls[0]), device=self.device)
+        trnMetrics = torch.zeros(5, 2, len(train_dls[0]), device=self.device)
         for i in range(self.args.site_number):
 
             self.models[i].train()
 
-            log.warning('E{} Training on site {} ---/{} starting'.format(epoch_ndx, i,len(train_dls[i])))
+            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+                log.warning('E{} Training on site {} ---/{} starting'.format(epoch_ndx, i,len(train_dls[i])))
 
             for batch_ndx, batch_tuple in enumerate(train_dls[i]):
                 self.optims[i].zero_grad()
@@ -192,9 +204,10 @@ class MultiSiteTrainingApp:
     def doValidation(self, epoch_ndx, val_dl):
         with torch.no_grad():
             self.models[0].eval()
-            valMetrics = torch.zeros(len(val_dl), device=self.device)
+            valMetrics = torch.zeros(2, len(val_dl), device=self.device)
 
-            log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
+            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+                log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
 
             for batch_ndx, batch_tuple in enumerate(val_dl):
                 val_loss = self.computeBatchLoss(
@@ -204,7 +217,7 @@ class MultiSiteTrainingApp:
                     self.models[0],
                     'val'
                 )
-                if batch_ndx % 50 == 0:
+                if batch_ndx % 100 == 0:
                     log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
 
         return valMetrics.to('cpu'), val_loss
@@ -217,17 +230,21 @@ class MultiSiteTrainingApp:
         if mode == 'trn':
             angle = random.choice([0, 90, 180, 270])
             flip = random.choice([True, False])
+            scale = random.uniform(0.9, 1.1)
             batch = functional.rotate(batch, angle)
             if flip:
                 batch = functional.hflip(batch)
+            batch = scale * batch
 
         pred = model(batch)
+        pred_label = torch.argmax(pred, dim=1)
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(pred, labels)
 
-        metrics[batch_ndx] = torch.FloatTensor([
-            loss.detach(),
-        ])
+        correct = torch.sum(pred_label == labels)
+
+        metrics[0, batch_ndx] = loss.detach()
+        metrics[1, batch_ndx] = correct / batch.shape[0]
 
         return loss.mean()
 
@@ -235,27 +252,28 @@ class MultiSiteTrainingApp:
         self,
         epoch_ndx,
         mode_str,
-        metrics,
-        img_list=None
+        metrics
     ):
         self.initTensorboardWriters()
-        log.info("E{} {}".format(
-            epoch_ndx,
-            type(self).__name__,
-        ))
 
-        log.info(
-            "E{} {}:{} loss".format(
-                epoch_ndx,
-                mode_str,
-                metrics[0].mean()
+        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            log.info(
+                "E{} {}:{} loss".format(
+                    epoch_ndx,
+                    mode_str,
+                    metrics[0].mean()
+                )
             )
-        )
 
         writer = getattr(self, mode_str + '_writer')
         writer.add_scalar(
             'loss_total',
             scalar_value=metrics[0].mean(),
+            global_step=self.totalTrainingSamples_count
+        )
+        writer.add_scalar(
+            'correct percentage',
+            scalar_value=metrics[1].mean(),
             global_step=self.totalTrainingSamples_count
         )
 

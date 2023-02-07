@@ -5,7 +5,6 @@ import h5py
 import os
 import numpy as np
 import torch
-import random
 
 data_path = 'data'
 
@@ -39,15 +38,15 @@ class DataSet(Dataset):
 
 def get_trn_loader(batch_size, device, site=None):
     trn_dataset = DataSet(data_path=data_path, mode='trn', device=device,site=site)
-    train_loader = DataLoader(trn_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    train_loader = DataLoader(trn_dataset, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=48)
     return train_loader
 
 def get_val_loader(batch_size, device):
     val_dataset = DataSet(data_path=data_path, mode='val', device=device)
-    train_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+    train_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False, num_workers=48)
     return train_loader
 
 def get_tst_loader(batch_size, device):
     tst_dataset = DataSet(data_path=data_path, mode='tst', device=device)
-    train_loader = DataLoader(tst_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    train_loader = DataLoader(tst_dataset, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=48)
     return train_loader

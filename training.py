@@ -21,7 +21,7 @@ from utils.losses import SampleLoss
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
 log.setLevel(logging.INFO)
-log.setLevel(logging.DEBUG)
+# log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
     def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None):
@@ -30,7 +30,7 @@ class TinyImageNetTrainingApp:
 
         parser = argparse.ArgumentParser(description="Test training")
         parser.add_argument("--epochs", default=2, type=int, help="number of training epochs")
-        parser.add_argument("--batch_size", default=4, type=int, help="number of batch size")
+        parser.add_argument("--batch_size", default=2048, type=int, help="number of batch size")
         parser.add_argument("--logdir", default="test", type=str, help="directory to save the tensorboard logs")
         parser.add_argument("--in_channels", default=3, type=int, help="number of image channels")
         parser.add_argument("--lr", default=1e-5, type=float, help="learning rate")
@@ -96,14 +96,16 @@ class TinyImageNetTrainingApp:
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
 
-            log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
-                epoch_ndx,
-                self.args.epochs,
-                len(train_dl),
-                len(val_dl),
-                self.args.batch_size,
-                (torch.cuda.device_count() if self.use_cuda else 1),
-            ))
+            
+            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+                log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
+                    epoch_ndx,
+                    self.args.epochs,
+                    len(train_dl),
+                    len(val_dl),
+                    self.args.batch_size,
+                    (torch.cuda.device_count() if self.use_cuda else 1),
+                ))
 
             trnMetrics = self.doTraining(epoch_ndx, train_dl)
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
@@ -121,9 +123,10 @@ class TinyImageNetTrainingApp:
 
     def doTraining(self, epoch_ndx, train_dl):
         self.model.train()
-        trnMetrics = torch.zeros(1, len(train_dl), device=self.device)
+        trnMetrics = torch.zeros(2, len(train_dl), device=self.device)
 
-        log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(train_dl)))
+        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(train_dl)))
 
         for batch_ndx, batch_tuple in enumerate(train_dl):
             self.optimizer.zero_grad()
@@ -137,7 +140,7 @@ class TinyImageNetTrainingApp:
             loss.backward()
             self.optimizer.step()
 
-            if batch_ndx % 100 == 0:
+            if batch_ndx % 100 == 0 and batch_ndx > 99:
                 log.info('E{} Training {}/{}'.format(epoch_ndx, batch_ndx, len(train_dl)))
 
         self.totalTrainingSamples_count += len(train_dl.dataset)
@@ -147,9 +150,10 @@ class TinyImageNetTrainingApp:
     def doValidation(self, epoch_ndx, val_dl):
         with torch.no_grad():
             self.model.eval()
-            valMetrics = torch.zeros(1, len(val_dl), device=self.device)
+            valMetrics = torch.zeros(2, len(val_dl), device=self.device)
 
-            log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
+            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+                log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
 
             for batch_ndx, batch_tuple in enumerate(val_dl):
                 val_loss = self.computeBatchLoss(
@@ -158,7 +162,7 @@ class TinyImageNetTrainingApp:
                     valMetrics,
                     'val'
                 )
-                if batch_ndx % 50 == 0:
+                if batch_ndx % 50 == 0 and batch_ndx > 49:
                     log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
 
         return valMetrics.to('cpu'), val_loss
@@ -171,17 +175,21 @@ class TinyImageNetTrainingApp:
         if mode == 'trn':
             angle = random.choice([0, 90, 180, 270])
             flip = random.choice([True, False])
+            scale = random.uniform(0.9, 1.1)
             batch = functional.rotate(batch, angle)
             if flip:
                 batch = functional.hflip(batch)
+            batch = scale * batch
 
         pred = self.model(batch)
+        pred_label = torch.argmax(pred, dim=1)
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(pred, labels)
 
-        metrics[:, batch_ndx] = torch.FloatTensor([
-            loss.detach(),
-        ])
+        correct = torch.sum(pred_label == labels)
+
+        metrics[0, batch_ndx] = loss.detach()
+        metrics[1, batch_ndx] = correct / batch.shape[0]
 
         return loss.mean()
 
@@ -193,23 +201,25 @@ class TinyImageNetTrainingApp:
         img_list=None
     ):
         self.initTensorboardWriters()
-        log.info("E{} {}".format(
-            epoch_ndx,
-            type(self).__name__,
-        ))
 
-        log.info(
-            "E{} {}:{} loss".format(
-                epoch_ndx,
-                mode_str,
-                metrics[0].mean()
+        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            log.info(
+                "E{} {}:{} loss".format(
+                    epoch_ndx,
+                    mode_str,
+                    metrics[0].mean()
+                )
             )
-        )
 
         writer = getattr(self, mode_str + '_writer')
         writer.add_scalar(
             'loss_total',
             scalar_value=metrics[0].mean(),
+            global_step=self.totalTrainingSamples_count
+        )
+        writer.add_scalar(
+            'correct percentage',
+            scalar_value=metrics[1].mean(),
             global_step=self.totalTrainingSamples_count
         )
 
