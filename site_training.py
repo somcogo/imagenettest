@@ -157,6 +157,7 @@ class MultiSiteTrainingApp:
             trnMetrics = torch.zeros(5, len(trn_dls[0]), device=self.device)
 
             trnMetrics = self.doTraining(epoch_ndx, trn_dls)
+            trnMetrics = trnMetrics.mean(dim=0)
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
 
             self.mergeParams(names=None)
@@ -210,7 +211,7 @@ class MultiSiteTrainingApp:
                 log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
 
             for batch_ndx, batch_tuple in enumerate(val_dl):
-                _, correct_ratio = self.computeBatchLoss(
+                _, accuracy = self.computeBatchLoss(
                     batch_ndx,
                     batch_tuple,
                     valMetrics,
@@ -220,7 +221,7 @@ class MultiSiteTrainingApp:
                 if batch_ndx % 100 == 0:
                     log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
 
-        return valMetrics.to('cpu'), correct_ratio
+        return valMetrics.to('cpu'), accuracy
 
     def computeBatchLoss(self, batch_ndx, batch_tup, metrics, model, mode):
         batch, labels = batch_tup
@@ -242,12 +243,11 @@ class MultiSiteTrainingApp:
         loss = loss_fn(pred, labels)
 
         correct = torch.sum(pred_label == labels)
-        correct_ratio = correct / batch.shape[0]
+        accuracy = correct / batch.shape[0]
 
         metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = correct_ratio
-
-        return loss.mean(), correct_ratio.mean()
+        metrics[1, batch_ndx] = accuracy.detach()
+        return loss, accuracy
 
     def logMetrics(
         self,
