@@ -1,6 +1,13 @@
 from training import TinyImageNetTrainingApp
 from site_training import MultiSiteTrainingApp
+import os
 
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+# exp1 = TinyImageNetTrainingApp(epochs=500, batch_size=4096, logdir='whole', lr=1e-3, comment='lr3aug')
+# exp1.main()
+# exp2 = TinyImageNetTrainingApp(epochs=500, batch_size=4096, logdir='whole', lr=1e-4, comment='lr4aug')
+# exp2.main()
 # exp1 = TinyImageNetTrainingApp(epochs=500, batch_size=4096, logdir='whole', lr=1e-3, comment='lr3aug')
 # exp1.main()
 # exp2 = TinyImageNetTrainingApp(epochs=500, batch_size=4096, logdir='whole', lr=1e-4, comment='lr4aug')
