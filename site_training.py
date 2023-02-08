@@ -61,7 +61,7 @@ class MultiSiteTrainingApp:
         self.logdir = os.path.join('./runs', self.args.logdir)
         os.makedirs(self.logdir, exist_ok=True)
 
-        self.dict_path = '/home/somahansel/work/imagenettest/saved_models/site1/imagenet_2023-02-07_03.20.48_lr5.best.state'
+        self.dict_path = 'saved_models/site1/imagenet_2023-02-08_12.57.19_lr5aug.6300000.state'
 
         self.trn_writer = None
         self.val_writer = None
@@ -106,7 +106,7 @@ class MultiSiteTrainingApp:
 
         if self.args.layer is not None:
             for model in models:
-                model.load_state_dict(torch.load(self.dict_path), strict=False)
+                model.load_state_dict(torch.load(self.dict_path)['model_state'], strict=False)
         return models
 
     def initOptimizer(self):
@@ -157,6 +157,7 @@ class MultiSiteTrainingApp:
             trnMetrics = torch.zeros(5, len(trn_dls[0]), device=self.device)
 
             trnMetrics = self.doTraining(epoch_ndx, trn_dls)
+            trnMetrics = trnMetrics.mean(dim=0)
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
 
             self.mergeParams(names=None)
@@ -184,7 +185,7 @@ class MultiSiteTrainingApp:
             for batch_ndx, batch_tuple in enumerate(train_dls[i]):
                 self.optims[i].zero_grad()
 
-                loss = self.computeBatchLoss(
+                loss, _ = self.computeBatchLoss(
                     batch_ndx,
                     batch_tuple,
                     trnMetrics[i],
@@ -210,7 +211,7 @@ class MultiSiteTrainingApp:
                 log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
 
             for batch_ndx, batch_tuple in enumerate(val_dl):
-                val_loss = self.computeBatchLoss(
+                _, accuracy = self.computeBatchLoss(
                     batch_ndx,
                     batch_tuple,
                     valMetrics,
@@ -220,7 +221,7 @@ class MultiSiteTrainingApp:
                 if batch_ndx % 100 == 0:
                     log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
 
-        return valMetrics.to('cpu'), val_loss
+        return valMetrics.to('cpu'), accuracy
 
     def computeBatchLoss(self, batch_ndx, batch_tup, metrics, model, mode):
         batch, labels = batch_tup
@@ -242,11 +243,11 @@ class MultiSiteTrainingApp:
         loss = loss_fn(pred, labels)
 
         correct = torch.sum(pred_label == labels)
-        correct_ratio = correct / batch.shape[0]
+        accuracy = correct / batch.shape[0]
 
         metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = correct_ratio
-        return correct_ratio.mean()
+        metrics[1, batch_ndx] = accuracy.detach()
+        return loss, accuracy
 
     def logMetrics(
         self,
