@@ -21,7 +21,7 @@ from utils.losses import SampleLoss
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
 log.setLevel(logging.INFO)
-# log.setLevel(logging.DEBUG)
+log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
     def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None):
@@ -92,7 +92,7 @@ class TinyImageNetTrainingApp:
 
         train_dl, val_dl = self.initDl()
 
-        val_best = 1e8
+        saving_criterion = 1e8
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
 
@@ -111,11 +111,11 @@ class TinyImageNetTrainingApp:
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
 
             if epoch_ndx == 1 or epoch_ndx % validation_cadence == 0:
-                valMetrics, val_loss = self.doValidation(epoch_ndx, val_dl)
+                valMetrics, correct_ratio = self.doValidation(epoch_ndx, val_dl)
                 self.logMetrics(epoch_ndx, 'val', valMetrics)
-                val_best = min(val_loss, val_best)
+                saving_criterion = min(correct_ratio, saving_criterion)
 
-                self.saveModel('imagenet', epoch_ndx, val_loss == val_best)
+                self.saveModel('imagenet', epoch_ndx, correct_ratio == saving_criterion)
 
         if hasattr(self, 'trn_writer'):
             self.trn_writer.close()
@@ -131,7 +131,7 @@ class TinyImageNetTrainingApp:
         for batch_ndx, batch_tuple in enumerate(train_dl):
             self.optimizer.zero_grad()
 
-            loss = self.computeBatchLoss(
+            loss, _ = self.computeBatchLoss(
                 batch_ndx,
                 batch_tuple,
                 trnMetrics,
@@ -156,7 +156,7 @@ class TinyImageNetTrainingApp:
                 log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
 
             for batch_ndx, batch_tuple in enumerate(val_dl):
-                val_loss = self.computeBatchLoss(
+                _, correct_ratio = self.computeBatchLoss(
                     batch_ndx,
                     batch_tuple,
                     valMetrics,
@@ -165,7 +165,7 @@ class TinyImageNetTrainingApp:
                 if batch_ndx % 50 == 0 and batch_ndx > 49:
                     log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
 
-        return valMetrics.to('cpu'), val_loss
+        return valMetrics.to('cpu'), correct_ratio
 
     def computeBatchLoss(self, batch_ndx, batch_tup, metrics, mode):
         batch, labels = batch_tup
@@ -187,11 +187,12 @@ class TinyImageNetTrainingApp:
         loss = loss_fn(pred, labels)
 
         correct = torch.sum(pred_label == labels)
+        correct_ratio = correct / batch.shape[0]
 
         metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = correct / batch.shape[0]
+        metrics[1, batch_ndx] = correct_ratio
 
-        return loss.mean()
+        return loss.mean(), correct_ratio.mean()
 
     def logMetrics(
         self,

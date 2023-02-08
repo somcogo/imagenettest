@@ -140,7 +140,7 @@ class MultiSiteTrainingApp:
 
         trn_dls, val_dl = self.initDl()
 
-        val_best = 1e8
+        saving_criterion = 1e8
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
             
@@ -162,11 +162,11 @@ class MultiSiteTrainingApp:
             self.mergeParams(names=None)
 
             if epoch_ndx == 1 or epoch_ndx % validation_cadence == 0:
-                valMetrics, val_loss = self.doValidation(epoch_ndx, val_dl)
+                valMetrics, correct_ratio = self.doValidation(epoch_ndx, val_dl)
                 self.logMetrics(epoch_ndx, 'val', valMetrics)
-                val_best = min(val_loss, val_best)
+                saving_criterion = min(correct_ratio, saving_criterion)
 
-                self.saveModel('mnist', epoch_ndx, val_loss == val_best)
+                self.saveModel('mnist', epoch_ndx, correct_ratio == saving_criterion)
 
         if hasattr(self, 'trn_writer'):
             self.trn_writer.close()
@@ -242,11 +242,11 @@ class MultiSiteTrainingApp:
         loss = loss_fn(pred, labels)
 
         correct = torch.sum(pred_label == labels)
+        correct_ratio = correct / batch.shape[0]
 
         metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = correct / batch.shape[0]
-
-        return loss.mean()
+        metrics[1, batch_ndx] = correct_ratio
+        return correct_ratio.mean()
 
     def logMetrics(
         self,
