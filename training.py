@@ -92,7 +92,7 @@ class TinyImageNetTrainingApp:
 
         train_dl, val_dl = self.initDl()
 
-        saving_criterion = 1e8
+        saving_criterion = 0
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
 
@@ -113,7 +113,7 @@ class TinyImageNetTrainingApp:
             if epoch_ndx == 1 or epoch_ndx % validation_cadence == 0:
                 valMetrics, correct_ratio = self.doValidation(epoch_ndx, val_dl)
                 self.logMetrics(epoch_ndx, 'val', valMetrics)
-                saving_criterion = min(correct_ratio, saving_criterion)
+                saving_criterion = max(correct_ratio, saving_criterion)
 
                 self.saveModel('imagenet', epoch_ndx, correct_ratio == saving_criterion)
 
