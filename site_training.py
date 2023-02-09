@@ -24,7 +24,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=None, comment=None, layer=None, sub_layer=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -62,7 +62,6 @@ class MultiSiteTrainingApp:
         os.makedirs(self.logdir, exist_ok=True)
 
         self.dict_path = 'saved_models/site1/imagenet_2023-02-08_11.25.09_lr3aug.best.state'
-        self.dict_path = 'saved_models/best_site1/imagenet_2023-02-08_12.57.19_lr5aug.6300000.state'
 
         self.trn_writer = None
         self.val_writer = None
@@ -178,7 +177,7 @@ class MultiSiteTrainingApp:
             self.val_writer.close()
 
     def doTraining(self, epoch_ndx, train_dls):
-        trnMetrics = torch.zeros(5, 2, len(train_dls[0]), device=self.device)
+        trnMetrics = torch.zeros(5, 2 + self.args.site_number, len(train_dls[0]), device=self.device)
         for i in range(self.args.site_number):
 
             self.models[i].train()
@@ -207,7 +206,7 @@ class MultiSiteTrainingApp:
         return trnMetrics.to('cpu')
 
     def doMultiTraining(self, epoch_ndx, mutli_trn_dl):
-        trnMetrics = torch.zeros(2, len(mutli_trn_dl), device=self.device)
+        trnMetrics = torch.zeros(2 + self.args.site_number, len(mutli_trn_dl), device=self.device)
 
         if epoch_ndx == 1 or epoch_ndx % 10 == 0:
             log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(mutli_trn_dl)))
@@ -237,7 +236,7 @@ class MultiSiteTrainingApp:
     def doValidation(self, epoch_ndx, val_dl):
         with torch.no_grad():
             self.models[0].eval()
-            valMetrics = torch.zeros(2, len(val_dl), device=self.device)
+            valMetrics = torch.zeros(2 + self.args.site_number, len(val_dl), device=self.device)
 
             if epoch_ndx == 1 or epoch_ndx % 10 == 0:
                 log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
@@ -274,11 +273,22 @@ class MultiSiteTrainingApp:
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(pred, labels)
 
-        correct = torch.sum(pred_label == labels)
+        correct_mask = pred_label == labels
+        correct = torch.sum(correct_mask)
         accuracy = correct / batch.shape[0]
 
+        labels_per_site = 200 // self.args.site_number
+
+        accuracy_per_class = []
+        for i in range(self.args.site_number):
+            class_mask = ((i * labels_per_site) <= labels) & (labels < ((i+1) * labels_per_site))
+            correct_per_class = torch.sum(correct_mask[class_mask])
+            total_per_class = torch.sum(class_mask)
+            accuracy_per_class.append(correct_per_class / total_per_class * 100)
+
         metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = accuracy.detach()
+        metrics[1, batch_ndx] = accuracy.detach() * 100
+        metrics[2: self.args.site_number + 2, batch_ndx] = torch.Tensor(accuracy_per_class)
         return loss, accuracy
 
     def computeMultiBatchLoss(self, batch_ndx, batch_tups, metrics, mode):
@@ -303,11 +313,22 @@ class MultiSiteTrainingApp:
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(preds, labels)
 
-        correct = torch.sum(pred_labels == labels)
+        correct_mask = pred_labels == labels
+        correct = torch.sum(correct_mask)
         accuracy = correct / batches.shape[1] / self.args.site_number
 
+        labels_per_site = 200 // self.args.site_number
+
+        accuracy_per_class = []
+        for i in range(self.args.site_number):
+            class_mask = ((i * labels_per_site) <= labels) & (labels < ((i+1) * labels_per_site))
+            correct_per_class = torch.sum(correct_mask[class_mask])
+            total_per_class = torch.sum(class_mask)
+            accuracy_per_class.append(correct_per_class / total_per_class * 100)
+
         metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = accuracy.detach()
+        metrics[1, batch_ndx] = accuracy.detach() * 100
+        metrics[2: self.args.site_number + 2, batch_ndx] = torch.Tensor(accuracy_per_class)
         return loss, accuracy
 
     def logMetrics(
@@ -334,10 +355,17 @@ class MultiSiteTrainingApp:
             global_step=self.totalTrainingSamples_count
         )
         writer.add_scalar(
-            'correct percentage',
+            'accuracy, overall',
             scalar_value=metrics[1].mean(),
             global_step=self.totalTrainingSamples_count
         )
+        for i in range(self.args.site_number):
+            writer.add_scalar(
+                'accuracy, class {}'.format(i + 1),
+                scalar_value=metrics[2+i].mean(),
+                global_step=self.totalTrainingSamples_count
+            )
+        writer.flush()
 
     def saveModel(self, type_str, epoch_ndx, isBest=False):
         file_path = os.path.join(

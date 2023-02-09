@@ -23,14 +23,14 @@ class ImageNetDataSet(Dataset):
             self.image_per_site = self.image_ds.shape[0] // site_number
 
     def __len__(self):
-        if self.site_number is not None:
+        if hasattr(self, 'site_number'):
             length = self.image_per_site
         else:
             length = self.image_ds.shape[0]
         return length
 
     def __getitem__(self, index):
-        if self.site_number is not None:
+        if hasattr(self, 'site_number'):
             indices = []
             for i in range(self.site_number):
                 indices.append(i * self.image_per_site + index)
