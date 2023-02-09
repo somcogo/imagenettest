@@ -61,7 +61,7 @@ class MultiSiteTrainingApp:
         self.logdir = os.path.join('./runs', self.args.logdir)
         os.makedirs(self.logdir, exist_ok=True)
 
-        self.dict_path = 'saved_models/best_site1/imagenet_2023-02-08_11.25.09_lr3aug.best.state'
+        self.dict_path = 'saved_models/best_site1/imagenet_2023-02-08_12.57.19_lr5aug.6300000.state'
 
         self.trn_writer = None
         self.val_writer = None
