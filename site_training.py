@@ -14,7 +14,7 @@ from torchvision.transforms import functional
 
 from models.model import ResNet18Model
 from utils.logconf import logging
-from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader
+from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, getMultiSiteTrnLoader
 from utils.ops import aug_rand
 from utils.losses import SampleLoss
 
@@ -126,7 +126,9 @@ class MultiSiteTrainingApp:
 
         val_dl = get_val_loader(self.args.batch_size, device=self.device)
 
-        return trn_dls, val_dl
+        multi_trn_dl = getMultiSiteTrnLoader(self.args.batch_size, site_number=self.args.site_number)
+
+        return trn_dls, val_dl, multi_trn_dl
 
     def initTensorboardWriters(self):
         if self.trn_writer is None:
@@ -138,7 +140,7 @@ class MultiSiteTrainingApp:
     def main(self):
         log.info("Starting {}, {}".format(type(self).__name__, self.args))
 
-        trn_dls, val_dl = self.initDl()
+        trn_dls, val_dl, multi_trn_dl = self.initDl()
 
         saving_criterion = 0
         validation_cadence = 5
@@ -158,6 +160,7 @@ class MultiSiteTrainingApp:
 
             trnMetrics = self.doTraining(epoch_ndx, trn_dls)
             trnMetrics = trnMetrics.mean(dim=0)
+            # trnMetrics = self.doMultiTraining(epoch_ndx, multi_trn_dl)
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
 
             self.mergeParams(names=None)
@@ -199,6 +202,34 @@ class MultiSiteTrainingApp:
                 log.info('E{} Training {}/{}'.format(epoch_ndx, batch_ndx, len(train_dls[0])))
 
         self.totalTrainingSamples_count += len(train_dls[0].dataset)
+
+        return trnMetrics.to('cpu')
+
+    def doMultiTraining(self, epoch_ndx, mutli_trn_dl):
+        trnMetrics = torch.zeros(2, len(mutli_trn_dl), device=self.device)
+
+        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(mutli_trn_dl)))
+
+        for batch_ndx, batch_tuples in enumerate(mutli_trn_dl):
+            for model in self.models:
+                model.train()
+
+            for optim in self.optims:
+                optim.zero_grad()
+
+                loss, _ = self.computeMultiBatchLoss(
+                    batch_ndx,
+                    batch_tuples,
+                    trnMetrics,
+                    'trn'
+                )
+
+                loss.backward()
+                for optim in self.optims:
+                    optim.step()
+
+        self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * 5
 
         return trnMetrics.to('cpu')
 
@@ -244,6 +275,35 @@ class MultiSiteTrainingApp:
 
         correct = torch.sum(pred_label == labels)
         accuracy = correct / batch.shape[0]
+
+        metrics[0, batch_ndx] = loss.detach()
+        metrics[1, batch_ndx] = accuracy.detach()
+        return loss, accuracy
+
+    def computeMultiBatchLoss(self, batch_ndx, batch_tups, metrics, mode):
+        batches, labels = batch_tups
+        batches = batches.to(device=self.device, non_blocking=True).permute(1, 0, 2, 3, 4)
+        labels = labels.to(device=self.device, non_blocking=True).permute(1, 0).flatten()
+
+        angle = random.choice([0, 90, 180, 270])
+        flip = random.choice([True, False])
+        scale = random.uniform(0.9, 1.1)
+        for batch in batches:
+            batch = functional.rotate(batch, angle)
+        if flip:
+            for batch in batches:
+                batch = functional.hflip(batch)
+        batches = scale * batches
+
+        preds = torch.Tensor([]).to(device=self.device)
+        for i in range(self.args.site_number):
+            preds= torch.cat((preds, self.models[i](batches[i])), 0)
+        pred_labels = torch.argmax(preds, dim=1)
+        loss_fn = nn.CrossEntropyLoss()
+        loss = loss_fn(preds, labels)
+
+        correct = torch.sum(pred_labels == labels)
+        accuracy = correct / batches.shape[1] / self.args.site_number
 
         metrics[0, batch_ndx] = loss.detach()
         metrics[1, batch_ndx] = accuracy.detach()
