@@ -7,7 +7,7 @@ import random
 
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from torchvision.transforms import functional
@@ -61,35 +61,39 @@ class MultiSiteTrainingApp:
         self.logdir = os.path.join('./runs', self.args.logdir)
         os.makedirs(self.logdir, exist_ok=True)
 
-        self.dict_path = 'saved_models/site1/imagenet_2023-02-08_11.25.09_lr3aug.best.state'
+        # For pretrainging
+        #
+        # self.dict_path = 'saved_models/best_site1/imagenet_2023-02-10_14.18.20_lr6augAdamW5classes.best.state'
 
         self.trn_writer = None
         self.val_writer = None
         self.totalTrainingSamples_count = 0
 
         self.models= self.initModel()
-        self.params_to_update = []
-        for i in range(self.args.site_number):
-            self.params_to_update.append([])
-        if self.args.layer is not None:
-            for i in range(self.args.site_number):
-                for name, param in self.models[i].named_parameters():
-                    layer = name.split('.')[1]
-                    sub_layer = name.split('.')[2]
-                    if layer == self.args.layer and sub_layer == self.args.sub_layer:
-                        self.params_to_update[i].append(param)
-        else:
-            for i in range(self.args.site_number):
-                for name, param in self.models[i].named_parameters():
-                    self.params_to_update[i].append(param)
-
-
-        for model in self.models:
-            for param in model.parameters():
-                param.requires_grad = False
-        for param_group in self.params_to_update:
-            for param in param_group:
-                param.requires_grad = True
+        #  For freezing layers
+        # 
+        # self.params_to_update = []
+        # for i in range(self.args.site_number):
+        #     self.params_to_update.append([])
+        # if self.args.layer is not None:
+        #     for i in range(self.args.site_number):
+        #         for name, param in self.models[i].named_parameters():
+        #             layer = name.split('.')[1]
+        #             sub_layer = name.split('.')[2]
+        #             if (layer == self.args.layer and sub_layer == self.args.sub_layer) or (layer == 'fc'):
+        #                 self.params_to_update[i].append(param)
+        # else:
+        #     for i in range(self.args.site_number):
+        #         for name, param in self.models[i].named_parameters():
+        #             self.params_to_update[i].append(param)
+        #
+        #
+        # for model in self.models:
+        #     for param in model.parameters():
+        #         param.requires_grad = False
+        # for param_group in self.params_to_update:
+        #     for param in param_group:
+        #         param.requires_grad = True
         self.optims = self.initOptimizer()
 
     def initModel(self):
@@ -104,18 +108,22 @@ class MultiSiteTrainingApp:
             for model in models:
                 model = model.to(self.device)
 
-        if self.args.layer is not None:
-            for model in models:
-                model.load_state_dict(torch.load(self.dict_path)['model_state'], strict=False)
+        # For pretraining
+        #
+        # if self.args.layer is not None:
+        #     for model in models:
+        #         model.load_state_dict(torch.load(self.dict_path)['model_state'], strict=False)
         return models
 
     def initOptimizer(self):
         optims = []
         for i in range(self.args.site_number):
-            if self.args.layer is not None:
-                optims.append(Adam(params=self.params_to_update[i], lr=self.args.lr))
-            else:
-                optims.append(Adam(params=self.models[i].parameters(), lr=self.args.lr))
+            # For freezing layers
+            #
+            # if self.args.layer is not None:
+            #     optims.append(AdamW(params=self.params_to_update[i], lr=self.args.lr, weight_decay=1e-5))
+            # else:
+            optims.append(AdamW(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=1e-5))
 
         return optims
 
@@ -355,13 +363,13 @@ class MultiSiteTrainingApp:
             global_step=self.totalTrainingSamples_count
         )
         writer.add_scalar(
-            'accuracy, overall',
+            'accuracy/overall',
             scalar_value=metrics[1].mean(),
             global_step=self.totalTrainingSamples_count
         )
         for i in range(self.args.site_number):
             writer.add_scalar(
-                'accuracy, class {}'.format(i + 1),
+                'accuracy/class {}'.format(i + 1),
                 scalar_value=metrics[2+i].mean(),
                 global_step=self.totalTrainingSamples_count
             )
@@ -422,10 +430,13 @@ class MultiSiteTrainingApp:
         names = self.models[0].named_parameters()
 
         for name, _ in names:
-            dict_avg[name] = 0
-            for i in range(self.args.site_number):
-                dict_avg[name] += dicts[i][name]
-            dict_avg[name] = dict_avg[name] / self.args.site_number
+            layer = name.split('.')[1]
+            sub_layer = name.split('.')[2]
+            if (layer != self.args.layer or sub_layer != self.args.sub_layer) and (layer != 'conv1'):
+                dict_avg[name] = 0
+                for i in range(self.args.site_number):
+                    dict_avg[name] += dicts[i][name]
+                dict_avg[name] = dict_avg[name] / self.args.site_number
 
         for i in range(self.args.site_number):
             self.models[i].load_state_dict(dict_avg, strict=False)
