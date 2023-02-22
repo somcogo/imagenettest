@@ -75,7 +75,7 @@ class ImageNetDataSet(Dataset):
 #         return images, labels
 
 def get_trn_loader(batch_size, device, site=None):
-    trn_dataset = ImageNetDataSet(data_path=data_path, mode='trn',site=site)
+    trn_dataset = ImageNetDataSet(data_path=data_path, mode='trn', site=site)
     train_loader = DataLoader(trn_dataset, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=8)
     return train_loader
 
@@ -86,6 +86,11 @@ def getMultiSiteTrnLoader(batch_size, site_number):
 
 def get_val_loader(batch_size, device):
     val_dataset = ImageNetDataSet(data_path=data_path, mode='val')
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False, num_workers=8)
+    return val_loader
+
+def getMultiSiteValLoader(batch_size, site_number):
+    val_dataset = ImageNetDataSet(data_path=data_path, mode='val', site_number=site_number)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False, num_workers=8)
     return val_loader
 

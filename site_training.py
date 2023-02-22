@@ -14,7 +14,7 @@ from torchvision.transforms import functional
 
 from models.model import ResNet18Model
 from utils.logconf import logging
-from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, getMultiSiteTrnLoader
+from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, getMultiSiteTrnLoader, getMultiSiteValLoader
 from utils.ops import aug_rand
 from utils.losses import SampleLoss
 
@@ -135,8 +135,9 @@ class MultiSiteTrainingApp:
         val_dl = get_val_loader(self.args.batch_size, device=self.device)
 
         multi_trn_dl = getMultiSiteTrnLoader(self.args.batch_size, site_number=self.args.site_number)
+        multi_val_dl = getMultiSiteValLoader(self.args.batch_size, site_number=self.args.site_number)
 
-        return trn_dls, val_dl, multi_trn_dl
+        return trn_dls, val_dl, multi_trn_dl, multi_val_dl
 
     def initTensorboardWriters(self):
         if self.trn_writer is None:
@@ -148,7 +149,7 @@ class MultiSiteTrainingApp:
     def main(self):
         log.info("Starting {}, {}".format(type(self).__name__, self.args))
 
-        trn_dls, val_dl, multi_trn_dl = self.initDl()
+        trn_dls, val_dl, multi_trn_dl, multi_val_dl = self.initDl()
 
         saving_criterion = 0
         validation_cadence = 5
@@ -171,10 +172,8 @@ class MultiSiteTrainingApp:
             trnMetrics = self.doMultiTraining(epoch_ndx, multi_trn_dl)
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
 
-            self.mergeParams(names=None)
-
             if epoch_ndx == 1 or epoch_ndx % validation_cadence == 0:
-                valMetrics, correct_ratio = self.doValidation(epoch_ndx, val_dl)
+                valMetrics, correct_ratio = self.doMultiValidation(epoch_ndx, multi_val_dl)
                 self.logMetrics(epoch_ndx, 'val', valMetrics)
                 saving_criterion = max(correct_ratio, saving_criterion)
 
@@ -237,6 +236,8 @@ class MultiSiteTrainingApp:
                 for optim in self.optims:
                     optim.step()
 
+            self.mergeParams(names=None)
+
         self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * 5
 
         return trnMetrics.to('cpu')
@@ -259,6 +260,26 @@ class MultiSiteTrainingApp:
                 )
                 if batch_ndx % 100 == 0:
                     log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
+
+        return valMetrics.to('cpu'), accuracy
+
+    def doMultiValidation(self, epoch_ndx, multi_val_dl):
+        with torch.no_grad():
+            valMetrics = torch.zeros(2 + self.args.site_number, len(multi_val_dl), device=self.device)
+            for model in self.models:
+                model.eval()
+
+            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+                log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(multi_val_dl)))
+
+            for batch_ndx, batch_tuples in enumerate(multi_val_dl):
+
+                loss, accuracy = self.computeMultiBatchLoss(
+                    batch_ndx,
+                    batch_tuples,
+                    valMetrics,
+                    'val'
+                )
 
         return valMetrics.to('cpu'), accuracy
 
@@ -320,6 +341,8 @@ class MultiSiteTrainingApp:
         pred_labels = torch.argmax(preds, dim=1)
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(preds, labels)
+        # preds = preds.view(self.args.site_number, -1, 200)
+        # labels = labels.view(self.args.site_number, -1)
 
         correct_mask = pred_labels == labels
         correct = torch.sum(correct_mask)
@@ -432,8 +455,8 @@ class MultiSiteTrainingApp:
         for name, _ in names:
             layer = name.split('.')[1]
             sub_layer = name.split('.')[2]
-            if (layer != self.args.layer or sub_layer != self.args.sub_layer) and (layer != 'conv1'):
-                dict_avg[name] = 0
+            if (layer != self.args.layer or sub_layer != self.args.sub_layer) and (layer != 'conv1') and (layer != 'fc'):
+                dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
                 for i in range(self.args.site_number):
                     dict_avg[name] += dicts[i][name]
                 dict_avg[name] = dict_avg[name] / self.args.site_number
