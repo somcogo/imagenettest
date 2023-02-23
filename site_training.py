@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from torchvision.transforms import functional
 
-from models.model import ResNet18Model
+from models.model import ResNet18Model, Encoder
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, getMultiSiteTrnLoader, getMultiSiteValLoader
 from utils.ops import aug_rand
@@ -24,7 +24,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -36,6 +36,7 @@ class MultiSiteTrainingApp:
         parser.add_argument("--lr", default=1e-3, type=float, help="learning rate")
         parser.add_argument("--site_number", default=5, type=int, help="number of sites taking part in learning")
         parser.add_argument("--layer", default=None, type=str, help="layer in which training should take place")
+        parser.add_argument("--model_name", default='resnet', type=str, help="name of model to use")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -55,6 +56,8 @@ class MultiSiteTrainingApp:
             self.args.layer = layer
         if sub_layer is not None:
             self.args.sub_layer = sub_layer
+        if model_name is not None:
+            self.args.model_name = model_name
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -99,7 +102,10 @@ class MultiSiteTrainingApp:
     def initModel(self):
         models = []
         for i in range(self.args.site_number):
-            models.append(ResNet18Model(num_classes=200))
+            if self.args.model_name == 'resnet':
+                models.append(ResNet18Model(num_classes=200))
+            elif self.args.model_name == 'unet':
+                models.append(Encoder(num_classes=200))
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:
@@ -453,13 +459,21 @@ class MultiSiteTrainingApp:
         names = self.models[0].named_parameters()
 
         for name, _ in names:
-            layer = name.split('.')[1]
-            sub_layer = name.split('.')[2]
-            if (layer != self.args.layer or sub_layer != self.args.sub_layer) and (layer != 'conv1') and (layer != 'fc'):
-                dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
-                for i in range(self.args.site_number):
-                    dict_avg[name] += dicts[i][name]
-                dict_avg[name] = dict_avg[name] / self.args.site_number
+            if self.args.model_name == 'resnet':
+                layer = name.split('.')[1]
+                sub_layer = name.split('.')[2]
+                if (layer != self.args.layer or sub_layer != self.args.sub_layer) and (layer != 'conv1') and (layer != 'fc'):
+                    dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
+                    for i in range(self.args.site_number):
+                        dict_avg[name] += dicts[i][name]
+                    dict_avg[name] = dict_avg[name] / self.args.site_number
+            if self.args.model_name == 'unet':
+                layer = name.split('.')[1]
+                if layer != 'qkv':
+                    dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
+                    for i in range(self.args.site_number):
+                        dict_avg[name] += dicts[i][name]
+                    dict_avg[name] = dict_avg[name] / self.args.site_number
 
         for i in range(self.args.site_number):
             self.models[i].load_state_dict(dict_avg, strict=False)
