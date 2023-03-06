@@ -1,10 +1,9 @@
-from torchvision import datasets
-from torchvision.transforms import functional
-from torch.utils.data import DataLoader, Dataset
-import h5py
 import os
+
+import h5py
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, Dataset
 
 data_path = 'data'
 
@@ -79,7 +78,7 @@ def get_trn_loader(batch_size, device, site=None):
     train_loader = DataLoader(trn_dataset, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=8)
     return train_loader
 
-def getMultiSiteTrnLoader(batch_size, site_number):
+def get_multi_site_trn_loader(batch_size, site_number):
     trn_dataset = ImageNetDataSet(data_path=data_path, mode='trn', site_number=site_number)
     train_loader = DataLoader(trn_dataset, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=8)
     return train_loader
@@ -89,7 +88,7 @@ def get_val_loader(batch_size, device):
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False, num_workers=8)
     return val_loader
 
-def getMultiSiteValLoader(batch_size, site_number):
+def get_multi_site_val_loader(batch_size, site_number):
     val_dataset = ImageNetDataSet(data_path=data_path, mode='val', site_number=site_number)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False, num_workers=8)
     return val_loader

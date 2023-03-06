@@ -14,7 +14,7 @@ from torchvision.transforms import functional
 
 from models.model import ResNet18Model, Encoder
 from utils.logconf import logging
-from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, getMultiSiteTrnLoader, getMultiSiteValLoader
+from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, get_multi_site_trn_loader, get_multi_site_val_loader
 from utils.ops import aug_rand
 from utils.losses import SampleLoss
 
@@ -24,7 +24,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -37,6 +37,7 @@ class MultiSiteTrainingApp:
         parser.add_argument("--site_number", default=5, type=int, help="number of sites taking part in learning")
         parser.add_argument("--layer", default=None, type=str, help="layer in which training should take place")
         parser.add_argument("--model_name", default='resnet', type=str, help="name of model to use")
+        parser.add_argument("--merge_mode", default='projection', type=str, help="describes which parameters of the model to merge")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -58,6 +59,8 @@ class MultiSiteTrainingApp:
             self.args.sub_layer = sub_layer
         if model_name is not None:
             self.args.model_name = model_name
+        if merge_mode is not None:
+            self.args.merge_mode = merge_mode
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -140,8 +143,8 @@ class MultiSiteTrainingApp:
 
         val_dl = get_val_loader(self.args.batch_size, device=self.device)
 
-        multi_trn_dl = getMultiSiteTrnLoader(self.args.batch_size, site_number=self.args.site_number)
-        multi_val_dl = getMultiSiteValLoader(self.args.batch_size, site_number=self.args.site_number)
+        multi_trn_dl = get_multi_site_trn_loader(self.args.batch_size, site_number=self.args.site_number)
+        multi_val_dl = get_multi_site_val_loader(self.args.batch_size, site_number=self.args.site_number)
 
         return trn_dls, val_dl, multi_trn_dl, multi_val_dl
 
@@ -242,7 +245,12 @@ class MultiSiteTrainingApp:
                 for optim in self.optims:
                     optim.step()
 
-            self.mergeParams(names=None)
+            if self.args.merge_mode == 'projection':
+                self.mergeParams(layer_names=['qkv'], depth=1)
+            elif self.args.merge_mode == 'second_half':
+                self.mergeParams(layer_names=['block3', 'block4', 'lin'], depth=0)
+            elif self.args.merge_mode == 'first_half':
+                self.mergeParams(layer_names=['block1', 'block2', 'conv0'], depth=0)
 
         self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * 5
 
@@ -450,7 +458,7 @@ class MultiSiteTrainingApp:
 
             log.debug("Saved model params to {}".format(best_path))
 
-    def mergeParams(self, names=None):
+    def mergeParams(self, layer_names=None, depth=None):
         dicts = []
         for i in range(self.args.site_number):
             dicts.append(self.models[i].state_dict())
@@ -468,8 +476,8 @@ class MultiSiteTrainingApp:
                         dict_avg[name] += dicts[i][name]
                     dict_avg[name] = dict_avg[name] / self.args.site_number
             if self.args.model_name == 'unet':
-                layer = name.split('.')[1]
-                if layer != 'qkv':
+                layer = name.split('.')[depth]
+                if layer in layer_names:
                     dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
                     for i in range(self.args.site_number):
                         dict_avg[name] += dicts[i][name]
