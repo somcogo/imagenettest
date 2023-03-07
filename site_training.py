@@ -234,16 +234,15 @@ class MultiSiteTrainingApp:
             for optim in self.optims:
                 optim.zero_grad()
 
-                loss, _ = self.computeMultiBatchLoss(
-                    batch_ndx,
-                    batch_tuples,
-                    trnMetrics,
-                    'trn'
-                )
-
-                loss.backward()
-                for optim in self.optims:
-                    optim.step()
+            loss, _ = self.computeMultiBatchLoss(
+                batch_ndx,
+                batch_tuples,
+                trnMetrics,
+                'trn')
+            loss.backward()
+            
+            for optim in self.optims:
+                optim.step()
 
             if self.args.merge_mode == 'projection':
                 self.mergeParams(layer_names=['qkv'], depth=1)
