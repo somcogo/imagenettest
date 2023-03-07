@@ -252,6 +252,12 @@ class MultiSiteTrainingApp:
                 self.mergeParams(layer_names=['block1', 'block2', 'conv0'], depth=0)
             elif self.args.merge_mode == 'last3/4':
                 self.mergeParams(layer_names=['block2', 'block3', 'block4', 'lin'], depth=0)
+            elif self.args.merge_mode == 'notnorms':
+                self.mergeParams(layer_names=['conv0', 'conv1', 'skip', 'qkv', 'proj'], depth=1)
+            elif self.args.merge_mode == 'attention':
+                self.mergeParams(layer_names=['qkv', 'proj'], depth=1)
+            elif self.args.merge_mode == 'everything':
+                self.mergeParams(layer_names=['conv0', 'block1', 'block2', 'block3', 'block4', 'lin'], depth=0)
 
         self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * 5
 
