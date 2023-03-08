@@ -7,16 +7,13 @@ import random
 
 import torch
 import torch.nn as nn
-from torch.optim import Adam, AdamW
+from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
-import numpy as np
 from torchvision.transforms import functional
 
 from models.model import ResNet18Model, Encoder
 from utils.logconf import logging
-from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader, get_multi_site_trn_loader, get_multi_site_val_loader
-from utils.ops import aug_rand
-from utils.losses import SampleLoss
+from utils.data_loader import get_trn_loader, get_val_loader, get_multi_site_trn_loader, get_multi_site_val_loader
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
@@ -73,6 +70,9 @@ class MultiSiteTrainingApp:
 
         self.models= self.initModel()
         self.optims = self.initOptimizer()
+        # Parameter check
+        # for i in range(site_number):
+        #     print(torch.equal(list(self.optims[i].param_groups[0]['params'])[0], list(self.models[i].parameters())[0]))
 
     def initModel(self):
         models = []
