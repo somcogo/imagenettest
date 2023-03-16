@@ -1,6 +1,6 @@
 import torch.nn as  nn
 import torch
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import resnet18, ResNet18_Weights, swin_t
 
 from .UNetBlock  import UNetBlock
 
@@ -36,4 +36,14 @@ class Encoder(nn.Module):
         x = self.pool(x)
         x = torch.flatten(x, 1)
         out = self.lin(x)
+        return out
+
+class TinySwin(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+
+        self.tiny_swin = swin_t(num_classes=num_classes)
+
+    def forward(self, x):
+        out = self.tiny_swin(x)
         return out

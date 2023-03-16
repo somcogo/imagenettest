@@ -11,7 +11,7 @@ from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import functional
 
-from models.model import ResNet18Model, Encoder
+from models.model import ResNet18Model, Encoder, TinySwin
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_val_loader, get_multi_site_trn_loader, get_multi_site_val_loader
 
@@ -81,6 +81,8 @@ class MultiSiteTrainingApp:
                 models.append(ResNet18Model(num_classes=200))
             elif self.args.model_name == 'unet':
                 models.append(Encoder(num_classes=200))
+            elif self.args.model_name == 'swint':
+                models.append(TinySwin(num_classes=200))
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:
@@ -100,7 +102,7 @@ class MultiSiteTrainingApp:
     def initDl(self):
         trn_dls = []
         for i in range(self.args.site_number):
-            trn_dls.append(get_trn_loader(self.args.batch_size, site=i, device=self.device))
+            trn_dls.append(get_trn_loader(self.args.batch_size, site=0, device=self.device))
 
         val_dl = get_val_loader(self.args.batch_size, device=self.device)
 
@@ -203,7 +205,7 @@ class MultiSiteTrainingApp:
             for optim in self.optims:
                 optim.step()
 
-            assert self.args.merge_mode in ['projection', 'second_half', 'first_half', 'last3/4', 'notnorms', 'attention', 'everything']
+            assert self.args.merge_mode in ['projection', 'second_half', 'first_half', 'last3/4', 'notnorms', 'attention', 'everything', 'notattention']
             if self.args.merge_mode == 'projection':
                 self.mergeParams(layer_names=['qkv'], depth=1)
             elif self.args.merge_mode == 'second_half':
@@ -218,6 +220,8 @@ class MultiSiteTrainingApp:
                 self.mergeParams(layer_names=['qkv', 'proj'], depth=1)
             elif self.args.merge_mode == 'everything':
                 self.mergeParams(layer_names=['conv0', 'block1', 'block2', 'block3', 'block4', 'lin'], depth=0)
+            elif self.args.merge_mode == 'notattention':
+                self.mergeParams(layer_names=['conv0', 'conv1', 'skip', 'weight', 'bias', 'norm0', 'norm1'], depth=1)
 
         self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * 5
 
@@ -449,6 +453,11 @@ class MultiSiteTrainingApp:
                     for i in range(self.args.site_number):
                         dict_avg[name] += dicts[i][name]
                     dict_avg[name] = dict_avg[name] / self.args.site_number
+            if self.args.model_name == 'swint':
+                dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
+                for i in range(self.args.site_number):
+                    dict_avg[name] += dicts[i][name]
+                dict_avg[name] = dict_avg[name] / self.args.site_number
 
         for i in range(self.args.site_number):
             self.models[i].load_state_dict(dict_avg, strict=False)
