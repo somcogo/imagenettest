@@ -22,7 +22,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None, label_smoothing=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -38,6 +38,7 @@ class MultiSiteTrainingApp:
         parser.add_argument("--merge_mode", default='projection', type=str, help="describes which parameters of the model to merge")
         parser.add_argument("--optimizer_type", default='adamw', type=str, help="type of optimizer to use")
         parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
+        parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -65,6 +66,8 @@ class MultiSiteTrainingApp:
             self.args.optimizer_type = optimizer_type
         if use_scheduler is not None:
             self.args.use_scheduler = use_scheduler
+        if label_smoothing is not None:
+            self.args.label_smoothing = label_smoothing
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -311,7 +314,7 @@ class MultiSiteTrainingApp:
 
         pred = model(batch)
         pred_label = torch.argmax(pred, dim=1)
-        loss_fn = nn.CrossEntropyLoss()
+        loss_fn = nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing)
         loss = loss_fn(pred, labels)
 
         correct_mask = pred_label == labels
