@@ -7,7 +7,7 @@ import random
 
 import torch
 import torch.nn as nn
-from torch.optim import Adam, AdamW
+from torch.optim import Adam, AdamW, SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
@@ -25,7 +25,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None, label_smoothing=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -39,6 +39,7 @@ class TinyImageNetTrainingApp:
         parser.add_argument("--model_name", default='resnet', type=str, help="name of the model to use")
         parser.add_argument("--optimizer_type", default='adam', type=str, help="type of optimizer to use")
         parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
+        parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -62,6 +63,8 @@ class TinyImageNetTrainingApp:
             self.args.optimizer_type = optimizer_type
         if use_scheduler is not None:
             self.args.use_scheduler = use_scheduler
+        if label_smoothing is not None:
+            self.args.label_smoothing = label_smoothing
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -95,11 +98,13 @@ class TinyImageNetTrainingApp:
             optim = Adam(params=self.model.parameters(), lr=self.args.lr)
         elif self.args.optimizer_type == 'adamw':
             optim = AdamW(params=self.model.parameters(), lr=self.args.lr, weight_decay=0.05)
+        elif self.args.optimizer_type == 'sgd':
+            optim = SGD(params=self.model.parameters(), lr=self.args.lr, weight_decay=0.0001, momentum=0.9)
         return optim
     
     def initScheduler(self):
         if self.args.use_scheduler:
-            scheduler = CosineAnnealingLR(self.optimizer, T_max=25)
+            scheduler = CosineAnnealingLR(self.optimizer, T_max=50)
         else:
             scheduler = None
         return scheduler
@@ -216,12 +221,12 @@ class TinyImageNetTrainingApp:
 
         pred = self.model(batch)
         pred_label = torch.argmax(pred, dim=1)
-        loss_fn = nn.CrossEntropyLoss()
+        loss_fn = nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing)
         loss = loss_fn(pred, labels)
 
         correct_mask = pred_label == labels
         correct = torch.sum(correct_mask)
-        accuracy = correct / batch.shape[0]
+        accuracy = correct / batch.shape[0] * 100
 
         labels_per_site = 200 // self.args.site_number
 

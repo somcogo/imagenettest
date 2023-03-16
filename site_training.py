@@ -7,7 +7,7 @@ import random
 
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import functional
@@ -107,6 +107,8 @@ class MultiSiteTrainingApp:
                 optims.append(AdamW(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=1e-5))
             if self.args.optimizer_type == 'adamwnew':
                 optims.append(AdamW(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=0.05))
+            if self.args.optimizer_type == 'sgd':
+                optims.append(SGD(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=0.0001, momentum=0.9))
 
         return optims
     
