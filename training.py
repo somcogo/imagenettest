@@ -7,12 +7,13 @@ import random
 
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from torchvision.transforms import functional
 
-from models.model import ResNet18Model, Encoder
+from models.model import ResNet18Model, Encoder, TinySwin
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader
 from utils.ops import aug_rand
@@ -24,7 +25,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -36,6 +37,8 @@ class TinyImageNetTrainingApp:
         parser.add_argument("--lr", default=1e-5, type=float, help="learning rate")
         parser.add_argument("--site", default=None, type=int, help="index of site to train on")
         parser.add_argument("--model_name", default='resnet', type=str, help="name of the model to use")
+        parser.add_argument("--optimizer_type", default='adam', type=str, help="type of optimizer to use")
+        parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -55,6 +58,10 @@ class TinyImageNetTrainingApp:
             self.args.site_number = site_number
         if model_name is not None:
             self.args.model_name = model_name
+        if optimizer_type is not None:
+            self.args.optimizer_type = optimizer_type
+        if use_scheduler is not None:
+            self.args.use_scheduler = use_scheduler
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -67,12 +74,15 @@ class TinyImageNetTrainingApp:
 
         self.model = self.initModel()
         self.optimizer = self.initOptimizer()
+        self.scheduler = self.initScheduler()
 
     def initModel(self):
         if self.args.model_name == 'resnet':
             model = ResNet18Model(num_classes=200)
         elif self.args.model_name == 'unet':
             model = Encoder(num_classes=200)
+        elif self.args.model_name == 'swint':
+            model = TinySwin(num_classes=200)
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:
@@ -81,7 +91,18 @@ class TinyImageNetTrainingApp:
         return model
 
     def initOptimizer(self):
-        return Adam(params=self.model.parameters(), lr=self.args.lr)
+        if self.args.optimizer_type == 'adam':
+            optim = Adam(params=self.model.parameters(), lr=self.args.lr)
+        elif self.args.optimizer_type == 'adamw':
+            optim = AdamW(params=self.model.parameters(), lr=self.args.lr, weight_decay=0.05)
+        return optim
+    
+    def initScheduler(self):
+        if self.args.use_scheduler:
+            scheduler = CosineAnnealingLR(self.optimizer, T_max=25)
+        else:
+            scheduler = None
+        return scheduler
 
     def initDl(self):
         trn_dl = get_trn_loader(self.args.batch_size, site=self.args.site, device=self.device)
@@ -124,6 +145,10 @@ class TinyImageNetTrainingApp:
                 saving_criterion = max(correct_ratio, saving_criterion)
 
                 self.saveModel('imagenet', epoch_ndx, correct_ratio == saving_criterion)
+            
+            if self.scheduler is not None:
+                self.scheduler.step()
+                # log.debug(self.scheduler.get_last_lr())
 
         if hasattr(self, 'trn_writer'):
             self.trn_writer.close()
