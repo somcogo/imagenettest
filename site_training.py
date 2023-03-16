@@ -8,6 +8,7 @@ import random
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import functional
 
@@ -21,7 +22,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -35,6 +36,8 @@ class MultiSiteTrainingApp:
         parser.add_argument("--layer", default=None, type=str, help="layer in which training should take place")
         parser.add_argument("--model_name", default='resnet', type=str, help="name of model to use")
         parser.add_argument("--merge_mode", default='projection', type=str, help="describes which parameters of the model to merge")
+        parser.add_argument("--optimizer_type", default='adamw', type=str, help="type of optimizer to use")
+        parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -58,6 +61,10 @@ class MultiSiteTrainingApp:
             self.args.model_name = model_name
         if merge_mode is not None:
             self.args.merge_mode = merge_mode
+        if optimizer_type is not None:
+            self.args.optimizer_type = optimizer_type
+        if use_scheduler is not None:
+            self.args.use_scheduler = use_scheduler
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -70,6 +77,7 @@ class MultiSiteTrainingApp:
 
         self.models= self.initModel()
         self.optims = self.initOptimizer()
+        self.schedulers = self.initScheduler()
         # Parameter check
         # for i in range(site_number):
         #     print(torch.equal(list(self.optims[i].param_groups[0]['params'])[0], list(self.models[i].parameters())[0]))
@@ -95,9 +103,21 @@ class MultiSiteTrainingApp:
     def initOptimizer(self):
         optims = []
         for i in range(self.args.site_number):
-            optims.append(AdamW(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=1e-5))
+            if self.args.optimizer_type == 'adamw':
+                optims.append(AdamW(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=1e-5))
+            if self.args.optimizer_type == 'adamwnew':
+                optims.append(AdamW(params=self.models[i].parameters(), lr=self.args.lr, weight_decay=0.05))
 
         return optims
+    
+    def initScheduler(self):
+        if self.args.use_scheduler:
+            schedulers = []
+            for optimizer in self.optims:
+                schedulers.append(CosineAnnealingLR(optimizer, T_max=25))
+        else:
+            schedulers = None
+        return schedulers
 
     def initDl(self):
         trn_dls = []
@@ -148,6 +168,11 @@ class MultiSiteTrainingApp:
                 saving_criterion = max(correct_ratio, saving_criterion)
 
                 self.saveModel('mnist', epoch_ndx, correct_ratio == saving_criterion)
+            
+            if self.schedulers is not None:
+                for scheduler in self.schedulers:
+                    scheduler.step()
+                    # log.debug(scheduler.get_last_lr())
 
         if hasattr(self, 'trn_writer'):
             self.trn_writer.close()
