@@ -218,15 +218,14 @@ class MultiSiteTrainingApp:
         return trnMetrics.to('cpu')
 
     def doMultiTraining(self, epoch_ndx, mutli_trn_dl):
+        for model in self.models:
+            model.train()
         trnMetrics = torch.zeros(2 + self.args.site_number, len(mutli_trn_dl), device=self.device)
 
         if epoch_ndx == 1 or epoch_ndx % 10 == 0:
             log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(mutli_trn_dl)))
 
         for batch_ndx, batch_tuples in enumerate(mutli_trn_dl):
-            for model in self.models:
-                model.train()
-
             for optim in self.optims:
                 optim.zero_grad()
 
@@ -258,8 +257,7 @@ class MultiSiteTrainingApp:
             elif self.args.merge_mode == 'notattention':
                 self.mergeParams(layer_names=['conv0', 'conv1', 'skip', 'weight', 'bias', 'norm0', 'norm1'], depth=1)
 
-        self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * 5
-
+        self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * self.args.site_number
         return trnMetrics.to('cpu')
 
     def doValidation(self, epoch_ndx, val_dl):
@@ -345,15 +343,16 @@ class MultiSiteTrainingApp:
         batches = batches.to(device=self.device, non_blocking=True).permute(1, 0, 2, 3, 4)
         labels = labels.to(device=self.device, non_blocking=True).permute(1, 0).flatten()
 
-        angle = random.choice([0, 90, 180, 270])
-        flip = random.choice([True, False])
-        scale = random.uniform(0.9, 1.1)
-        for batch in batches:
-            batch = functional.rotate(batch, angle)
-        if flip:
+        if mode == 'trn':
+            angle = random.choice([0, 90, 180, 270])
+            flip = random.choice([True, False])
+            scale = random.uniform(0.9, 1.1)
             for batch in batches:
-                batch = functional.hflip(batch)
-        batches = scale * batches
+                batch = functional.rotate(batch, angle)
+            if flip:
+                for batch in batches:
+                    batch = functional.hflip(batch)
+            batches = scale * batches
 
         preds = torch.Tensor([]).to(device=self.device)
         for i in range(self.args.site_number):
