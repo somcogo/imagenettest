@@ -1,6 +1,8 @@
 import torch.nn as  nn
 import torch
-from torchvision.models import resnet18, ResNet18_Weights, swin_t
+from torchvision.models import resnet18, ResNet18_Weights, swin_t, swin_b
+from timm import create_model
+from torchvision.transforms import Resize
 
 from .UNetBlock  import UNetBlock
 
@@ -46,4 +48,18 @@ class TinySwin(nn.Module):
 
     def forward(self, x):
         out = self.tiny_swin(x)
+        return out
+
+class LargeSwin(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+
+        self.large_swin = create_model('swin_large_patch4_window12_384',
+                                     pretrained=False, drop_path_rate=0.1,
+                                     num_classes=num_classes)
+        self.resize = Resize(size=(384, 384), antialias=True)
+
+    def forward(self, x):
+        x = self.resize(x)
+        out = self.large_swin(x)
         return out

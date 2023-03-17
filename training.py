@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from torchvision.transforms import functional
 
-from models.model import ResNet18Model, Encoder, TinySwin
+from models.model import ResNet18Model, Encoder, TinySwin, LargeSwin
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader
 from utils.ops import aug_rand
@@ -25,7 +25,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None, label_smoothing=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -40,6 +40,7 @@ class TinyImageNetTrainingApp:
         parser.add_argument("--optimizer_type", default='adam', type=str, help="type of optimizer to use")
         parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
+        parser.add_argument("--T_max", default=1000, type=int, help="T_max in Cosine LR scheduler")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -65,6 +66,8 @@ class TinyImageNetTrainingApp:
             self.args.use_scheduler = use_scheduler
         if label_smoothing is not None:
             self.args.label_smoothing = label_smoothing
+        if T_max is not None:
+            self.args.T_max = T_max
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -86,6 +89,8 @@ class TinyImageNetTrainingApp:
             model = Encoder(num_classes=200)
         elif self.args.model_name == 'swint':
             model = TinySwin(num_classes=200)
+        elif self.args.model_name == 'swinl':
+            model = LargeSwin(num_classes=200)
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:
@@ -104,7 +109,7 @@ class TinyImageNetTrainingApp:
     
     def initScheduler(self):
         if self.args.use_scheduler:
-            scheduler = CosineAnnealingLR(self.optimizer, T_max=50)
+            scheduler = CosineAnnealingLR(self.optimizer, T_max=self.args.T_max)
         else:
             scheduler = None
         return scheduler
