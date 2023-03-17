@@ -104,7 +104,7 @@ class TinyImageNetTrainingApp:
     
     def initScheduler(self):
         if self.args.use_scheduler:
-            scheduler = CosineAnnealingLR(self.optimizer, T_max=50)
+            scheduler = CosineAnnealingLR(self.optimizer, T_max=100)
         else:
             scheduler = None
         return scheduler
