@@ -185,7 +185,7 @@ class TinyImageNetTrainingApp:
             loss.backward()
             self.optimizer.step()
 
-            if batch_ndx % 100 == 0 and batch_ndx > 99:
+            if batch_ndx % 100 == 0 and batch_ndx > 199:
                 log.info('E{} Training {}/{}'.format(epoch_ndx, batch_ndx, len(train_dl)))
 
         self.totalTrainingSamples_count += len(train_dl.dataset)
