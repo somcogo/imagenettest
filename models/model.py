@@ -49,6 +49,16 @@ class TinySwin(nn.Module):
     def forward(self, x):
         out = self.tiny_swin(x)
         return out
+    
+class SmallSwin(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+
+        self.small_swin = swin_s(num_classes=num_classes)
+
+    def forward(self, x):
+        out = self.small_swin(x)
+        return out
 
 class SmallSwin(nn.Module):
     def __init__(self, num_classes):
