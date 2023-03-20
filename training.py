@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from torchvision.transforms import functional
 
-from models.model import ResNet18Model, Encoder, TinySwin, LargeSwin
+from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader
 from utils.ops import aug_rand
@@ -89,6 +89,8 @@ class TinyImageNetTrainingApp:
             model = Encoder(num_classes=200)
         elif self.args.model_name == 'swint':
             model = TinySwin(num_classes=200)
+        elif self.args.model_name == 'swins':
+            model = SmallSwin(num_classes=200)
         elif self.args.model_name == 'swinl':
             model = LargeSwin(num_classes=200)
         if self.use_cuda:

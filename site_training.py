@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import functional
 
-from models.model import ResNet18Model, Encoder, TinySwin, LargeSwin
+from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_val_loader, get_multi_site_trn_loader, get_multi_site_val_loader
 
@@ -97,7 +97,9 @@ class MultiSiteTrainingApp:
                 models.append(Encoder(num_classes=200))
             elif self.args.model_name == 'swint':
                 models.append(TinySwin(num_classes=200))
-            elif self.args.model_name == 'swint':
+            elif self.args.model_name == 'swins':
+                models.append(SmallSwin(num_classes=200))
+            elif self.args.model_name == 'swinl':
                 models.append(LargeSwin(num_classes=200))
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))

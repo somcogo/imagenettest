@@ -1,6 +1,6 @@
 import torch.nn as  nn
 import torch
-from torchvision.models import resnet18, ResNet18_Weights, swin_t, swin_b
+from torchvision.models import resnet18, ResNet18_Weights, swin_t, swin_s
 from timm import create_model
 from torchvision.transforms import Resize
 
@@ -48,6 +48,16 @@ class TinySwin(nn.Module):
 
     def forward(self, x):
         out = self.tiny_swin(x)
+        return out
+
+class SmallSwin(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+
+        self.small_swin = swin_s(num_classes=num_classes)
+
+    def forward(self, x):
+        out = self.small_swin(x)
         return out
 
 class LargeSwin(nn.Module):
