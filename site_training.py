@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.optim import AdamW, SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.transforms import functional
+from torchvision.transforms import functional, RandomResizedCrop
 
 from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
@@ -22,7 +22,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None, aug_mode=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -35,11 +35,12 @@ class MultiSiteTrainingApp:
         parser.add_argument("--site_number", default=5, type=int, help="number of sites taking part in learning")
         parser.add_argument("--layer", default=None, type=str, help="layer in which training should take place")
         parser.add_argument("--model_name", default='resnet', type=str, help="name of model to use")
-        parser.add_argument("--merge_mode", default='projection', type=str, help="describes which parameters of the model to merge")
+        parser.add_argument("--merge_mode", default='everything', type=str, help="describes which parameters of the model to merge")
         parser.add_argument("--optimizer_type", default='adamw', type=str, help="type of optimizer to use")
         parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument("--T_max", default=1000, type=int, help="T_max in Cosine LR scheduler")
+        parser.add_argument("--aug_mode", default='standard', type=str, help="mode of data augmentation")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -71,6 +72,8 @@ class MultiSiteTrainingApp:
             self.args.label_smoothing = label_smoothing
         if T_max is not None:
             self.args.T_max = T_max
+        if aug_mode is not None:
+            self.args.aug_mode = aug_mode
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -346,15 +349,21 @@ class MultiSiteTrainingApp:
         labels = labels.to(device=self.device, non_blocking=True).permute(1, 0).flatten()
 
         if mode == 'trn':
-            angle = random.choice([0, 90, 180, 270])
             flip = random.choice([True, False])
-            scale = random.uniform(0.9, 1.1)
-            for batch in batches:
-                batch = functional.rotate(batch, angle)
             if flip:
                 for batch in batches:
                     batch = functional.hflip(batch)
-            batches = scale * batches
+            if self.args.aug_mode == 'random_resized_crop':
+                resized_crop = RandomResizedCrop(64)
+                for batch in batches:
+                    batch = resized_crop(batch)
+            else:
+                angle = random.choice([0, 90, 180, 270])
+                scale = random.uniform(0.9, 1.1)
+                for batch in batches:
+                    batch = functional.rotate(batch, angle)
+                for batch in batches:
+                    batch = scale * batch
 
         preds = torch.Tensor([]).to(device=self.device)
         for i in range(self.args.site_number):
