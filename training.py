@@ -121,6 +121,7 @@ class TinyImageNetTrainingApp:
                                    epochs=self.args.epochs, div_factor=10,
                                    final_div_factor=10, pct_start=10/self.args.epochs)
         else:
+            assert self.args.scheduler_mode is None
             scheduler = None
         return scheduler
 
