@@ -25,7 +25,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None, pretrained=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -41,6 +41,7 @@ class TinyImageNetTrainingApp:
         parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument("--T_max", default=1000, type=int, help="T_max in Cosine LR scheduler")
+        parser.add_argument("--pretrained", default=False, type=bool, help="use pretrained model")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -68,6 +69,8 @@ class TinyImageNetTrainingApp:
             self.args.label_smoothing = label_smoothing
         if T_max is not None:
             self.args.T_max = T_max
+        if pretrained is not None:
+            self.args.pretrained = pretrained
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -88,11 +91,11 @@ class TinyImageNetTrainingApp:
         elif self.args.model_name == 'unet':
             model = Encoder(num_classes=200)
         elif self.args.model_name == 'swint':
-            model = TinySwin(num_classes=200)
+            model = TinySwin(num_classes=200, pretrained=self.args.pretrained)
         elif self.args.model_name == 'swins':
-            model = SmallSwin(num_classes=200)
+            model = SmallSwin(num_classes=200, pretrained=self.args.pretrained)
         elif self.args.model_name == 'swinl':
-            model = LargeSwin(num_classes=200)
+            model = LargeSwin(num_classes=200, pretrained=self.args.pretrained)
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:

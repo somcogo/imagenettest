@@ -1,6 +1,6 @@
 import torch.nn as  nn
 import torch
-from torchvision.models import resnet18, ResNet18_Weights, swin_t, swin_s
+from torchvision.models import resnet18, ResNet18_Weights, swin_t, swin_s, Swin_T_Weights, Swin_S_Weights
 from timm import create_model
 from torchvision.transforms import Resize
 
@@ -41,31 +41,49 @@ class Encoder(nn.Module):
         return out
 
 class TinySwin(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, pretrained=False):
         super().__init__()
 
-        self.tiny_swin = swin_t(num_classes=num_classes)
+        if pretrained:
+            weights = 'DEFAULT'
+            swin_num_classes = 1000
+            self.lin = nn.Linear(1000, num_classes)
+        else:
+            weights = None
+            swin_num_classes = num_classes
+        self.tiny_swin = swin_t(num_classes=swin_num_classes, weights=weights)
 
     def forward(self, x):
         out = self.tiny_swin(x)
+        if hasattr(self, 'lin'):
+            out = self.lin(out)
         return out
     
 class SmallSwin(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, pretrained=False):
         super().__init__()
 
-        self.small_swin = swin_s(num_classes=num_classes)
+        if pretrained:
+            weights = 'DEFAULT'
+            swin_num_classes = 1000
+            self.lin = nn.Linear(1000, num_classes)
+        else:
+            weights = None
+            swin_num_classes = num_classes
+        self.small_swin = swin_s(num_classes=swin_num_classes, weights=weights)
 
     def forward(self, x):
         out = self.small_swin(x)
+        if hasattr(self, 'lin'):
+            out = self.lin(out)
         return out
 
 class LargeSwin(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, pretrained):
         super().__init__()
 
         self.large_swin = create_model('swin_large_patch4_window12_384',
-                                     pretrained=False, drop_path_rate=0.1,
+                                     pretrained=pretrained, drop_path_rate=0.1,
                                      num_classes=num_classes)
         self.resize = Resize(size=(384, 384), antialias=True)
 
