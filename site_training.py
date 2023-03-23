@@ -22,7 +22,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None, aug_mode=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None, pretrained=None, aug_mode=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -40,6 +40,7 @@ class MultiSiteTrainingApp:
         parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument("--T_max", default=1000, type=int, help="T_max in Cosine LR scheduler")
+        parser.add_argument("--pretrained", default=False, type=bool, help="use pretrained model")
         parser.add_argument("--aug_mode", default='standard', type=str, help="mode of data augmentation")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
@@ -72,6 +73,8 @@ class MultiSiteTrainingApp:
             self.args.label_smoothing = label_smoothing
         if T_max is not None:
             self.args.T_max = T_max
+        if pretrained is not None:
+            self.args.pretrained = pretrained
         if aug_mode is not None:
             self.args.aug_mode = aug_mode
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
@@ -99,11 +102,11 @@ class MultiSiteTrainingApp:
             elif self.args.model_name == 'unet':
                 models.append(Encoder(num_classes=200))
             elif self.args.model_name == 'swint':
-                models.append(TinySwin(num_classes=200))
+                models.append(TinySwin(num_classes=200, pretrained=self.args.pretrained))
             elif self.args.model_name == 'swins':
-                models.append(SmallSwin(num_classes=200))
+                models.append(SmallSwin(num_classes=200, pretrained=self.args.pretrained))
             elif self.args.model_name == 'swinl':
-                models.append(LargeSwin(num_classes=200))
+                models.append(LargeSwin(num_classes=200, pretrained=self.args.pretrained))
         if self.use_cuda:
             log.info("Using CUDA; {} devices.".format(torch.cuda.device_count()))
             if torch.cuda.device_count() > 1:
