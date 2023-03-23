@@ -8,10 +8,10 @@ import random
 import torch
 import torch.nn as nn
 from torch.optim import Adam, AdamW, SGD
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
-from torchvision.transforms import functional
+from torchvision.transforms import functional, RandomResizedCrop, Pad, RandomCrop, RandomHorizontalFlip, RandomRotation, RandomErasing, Compose, RandomApply
 
 from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
@@ -25,7 +25,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class TinyImageNetTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None, pretrained=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site=None, comment=None, site_number=5, model_name=None, optimizer_type=None, scheduler_mode=None, label_smoothing=None, T_max=None, pretrained=None, aug_mode=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -38,10 +38,11 @@ class TinyImageNetTrainingApp:
         parser.add_argument("--site", default=None, type=int, help="index of site to train on")
         parser.add_argument("--model_name", default='resnet', type=str, help="name of the model to use")
         parser.add_argument("--optimizer_type", default='adam', type=str, help="type of optimizer to use")
-        parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument("--T_max", default=1000, type=int, help="T_max in Cosine LR scheduler")
         parser.add_argument("--pretrained", default=False, type=bool, help="use pretrained model")
+        parser.add_argument("--aug_mode", default='standard', type=str, help="mode of data augmentation")
+        parser.add_argument("--scheduler_mode", default=None, type=str, help="choice of LR scheduler")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -63,14 +64,16 @@ class TinyImageNetTrainingApp:
             self.args.model_name = model_name
         if optimizer_type is not None:
             self.args.optimizer_type = optimizer_type
-        if use_scheduler is not None:
-            self.args.use_scheduler = use_scheduler
         if label_smoothing is not None:
             self.args.label_smoothing = label_smoothing
         if T_max is not None:
             self.args.T_max = T_max
         if pretrained is not None:
             self.args.pretrained = pretrained
+        if aug_mode is not None:
+            self.args.aug_mode = aug_mode
+        if scheduler_mode is not None:
+            self.args.scheduler_mode = scheduler_mode
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -113,9 +116,15 @@ class TinyImageNetTrainingApp:
         return optim
     
     def initScheduler(self):
-        if self.args.use_scheduler:
+        if self.args.scheduler_mode == 'cosine':
             scheduler = CosineAnnealingLR(self.optimizer, T_max=self.args.T_max)
+        elif self.args.scheduler_mode == 'onecycle':
+            scheduler = OneCycleLR(self.optimizer, max_lr=0.01,
+                                   steps_per_epoch=(100000//self.args.batch_size),
+                                   epochs=self.args.epochs, div_factor=10,
+                                   final_div_factor=10, pct_start=10/self.args.epochs)
         else:
+            assert self.args.scheduler_mode is None
             scheduler = None
         return scheduler
 
@@ -161,7 +170,7 @@ class TinyImageNetTrainingApp:
 
                 self.saveModel('imagenet', epoch_ndx, correct_ratio == saving_criterion)
             
-            if self.scheduler is not None:
+            if self.args.scheduler_mode == 'cosine':
                 self.scheduler.step()
                 # log.debug(self.scheduler.get_last_lr())
 
@@ -187,8 +196,10 @@ class TinyImageNetTrainingApp:
 
             loss.backward()
             self.optimizer.step()
+            if self.args.scheduler_mode == 'onecycle':
+                self.scheduler.step()
 
-            if batch_ndx % 100 == 0 and batch_ndx > 199:
+            if batch_ndx % 1000 == 0 and batch_ndx > 199:
                 log.info('E{} Training {}/{}'.format(epoch_ndx, batch_ndx, len(train_dl)))
 
         self.totalTrainingSamples_count += len(train_dl.dataset)
@@ -221,13 +232,32 @@ class TinyImageNetTrainingApp:
         labels = labels.to(device=self.device, non_blocking=True)
 
         if mode == 'trn':
-            angle = random.choice([0, 90, 180, 270])
-            flip = random.choice([True, False])
-            scale = random.uniform(0.9, 1.1)
-            batch = functional.rotate(batch, angle)
-            if flip:
-                batch = functional.hflip(batch)
-            batch = scale * batch
+            assert self.args.aug_mode in ['standard', 'random_resized_crop', 'resnet']
+            if self.args.aug_mode == 'standard':
+                flip = random.choice([True, False])
+                angle = random.choice([0, 90, 180, 270])
+                scale = random.uniform(0.9, 1.1)
+                if flip:
+                    batch = functional.hflip(batch)
+                batch = functional.rotate(batch, angle)
+                batch = scale * batch
+            elif self.args.aug_mode == 'random_resized_crop':
+                flip = random.choice([True, False])
+                if flip:
+                    batch = functional.hflip(batch)
+                resized_crop = RandomResizedCrop(64)
+                batch = resized_crop(batch)
+            elif self.args.aug_mode == 'resnet':
+                trans = Compose([
+                    Pad(4),
+                    RandomCrop(64),
+                    RandomHorizontalFlip(p=0.25),
+                    RandomApply(torch.nn.ModuleList([
+                        RandomRotation(degrees=15)
+                    ]), p=0.25),
+                    RandomErasing(p=0.5, scale=(0.015625, 0.25), ratio=(0.25, 4))
+                ])
+                batch = trans(batch)
 
         pred = self.model(batch)
         pred_label = torch.argmax(pred, dim=1)
