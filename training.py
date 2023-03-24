@@ -122,7 +122,7 @@ class TinyImageNetTrainingApp:
             scheduler = OneCycleLR(self.optimizer, max_lr=0.01,
                                    steps_per_epoch=(100000//self.args.batch_size),
                                    epochs=self.args.epochs, div_factor=10,
-                                   final_div_factor=10, pct_start=10/self.args.epochs)
+                                   final_div_factor=10, pct_start=0.3)
         else:
             assert self.args.scheduler_mode is None
             scheduler = None
