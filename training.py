@@ -16,7 +16,7 @@ from torchvision.transforms import functional, RandomResizedCrop, Pad, RandomCro
 from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
 from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader
-from utils.ops import aug_rand
+from utils.ops import aug_image
 from utils.losses import SampleLoss
 
 log = logging.getLogger(__name__)
@@ -233,31 +233,7 @@ class TinyImageNetTrainingApp:
 
         if mode == 'trn':
             assert self.args.aug_mode in ['standard', 'random_resized_crop', 'resnet']
-            if self.args.aug_mode == 'standard':
-                flip = random.choice([True, False])
-                angle = random.choice([0, 90, 180, 270])
-                scale = random.uniform(0.9, 1.1)
-                if flip:
-                    batch = functional.hflip(batch)
-                batch = functional.rotate(batch, angle)
-                batch = scale * batch
-            elif self.args.aug_mode == 'random_resized_crop':
-                flip = random.choice([True, False])
-                if flip:
-                    batch = functional.hflip(batch)
-                resized_crop = RandomResizedCrop(64)
-                batch = resized_crop(batch)
-            elif self.args.aug_mode == 'resnet':
-                trans = Compose([
-                    Pad(4),
-                    RandomCrop(64),
-                    RandomHorizontalFlip(p=0.25),
-                    RandomApply(torch.nn.ModuleList([
-                        RandomRotation(degrees=15)
-                    ]), p=0.25),
-                    RandomErasing(p=0.5, scale=(0.015625, 0.25), ratio=(0.25, 4))
-                ])
-                batch = trans(batch)
+            batch = aug_image(batch, self.args.aug_mode, multi_training=False)
 
         pred = self.model(batch)
         pred_label = torch.argmax(pred, dim=1)

@@ -46,17 +46,13 @@ class TinySwin(nn.Module):
 
         if pretrained:
             weights = 'DEFAULT'
-            swin_num_classes = 1000
-            self.lin = nn.Linear(1000, num_classes)
         else:
             weights = None
-            swin_num_classes = num_classes
-        self.tiny_swin = swin_t(num_classes=swin_num_classes, weights=weights)
+        self.tiny_swin = swin_t(weights=weights)
+        self.tiny_swin.head = nn.Linear(in_features=768, out_features=num_classes)
 
     def forward(self, x):
         out = self.tiny_swin(x)
-        if hasattr(self, 'lin'):
-            out = self.lin(out)
         return out
     
 class SmallSwin(nn.Module):
@@ -65,17 +61,13 @@ class SmallSwin(nn.Module):
 
         if pretrained:
             weights = 'DEFAULT'
-            swin_num_classes = 1000
-            self.lin = nn.Linear(1000, num_classes)
         else:
             weights = None
-            swin_num_classes = num_classes
-        self.small_swin = swin_s(num_classes=swin_num_classes, weights=weights)
+        self.small_swin = swin_s(weights=weights)
+        self.small_swin.head = nn.Linear(in_features=768, out_features=num_classes)
 
     def forward(self, x):
         out = self.small_swin(x)
-        if hasattr(self, 'lin'):
-            out = self.lin(out)
         return out
 
 class LargeSwin(nn.Module):
