@@ -8,13 +8,14 @@ import random
 import torch
 import torch.nn as nn
 from torch.optim import AdamW, SGD
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import functional, RandomResizedCrop
 
 from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
-from utils.data_loader import get_trn_loader, get_val_loader, get_multi_site_trn_loader, get_multi_site_val_loader
+from utils.data_loader import get_multi_site_trn_loader, get_multi_site_val_loader
+from utils.ops import aug_image
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
@@ -22,7 +23,7 @@ log.setLevel(logging.INFO)
 # log.setLevel(logging.DEBUG)
 
 class MultiSiteTrainingApp:
-    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, layer=None, sub_layer=None, model_name=None, merge_mode=None, optimizer_type=None, use_scheduler=None, label_smoothing=None, T_max=None, pretrained=None, aug_mode=None):
+    def __init__(self, sys_argv=None, epochs=None, batch_size=None, logdir=None, lr=None, site_number=5, comment=None, model_name=None, merge_mode=None, optimizer_type=None, label_smoothing=None, T_max=None, pretrained=None, aug_mode=None, scheduler_mode=None):
         if sys_argv is None:
             sys_argv = sys.argv[1:]
 
@@ -33,15 +34,14 @@ class MultiSiteTrainingApp:
         parser.add_argument("--in_channels", default=3, type=int, help="number of image channels")
         parser.add_argument("--lr", default=1e-3, type=float, help="learning rate")
         parser.add_argument("--site_number", default=5, type=int, help="number of sites taking part in learning")
-        parser.add_argument("--layer", default=None, type=str, help="layer in which training should take place")
         parser.add_argument("--model_name", default='resnet', type=str, help="name of model to use")
         parser.add_argument("--merge_mode", default='everything', type=str, help="describes which parameters of the model to merge")
         parser.add_argument("--optimizer_type", default='adamw', type=str, help="type of optimizer to use")
-        parser.add_argument("--use_scheduler", default=False, type=bool, help="determines whether to use LR scheduling or not")
         parser.add_argument("--label_smoothing", default=0.0, type=float, help="label smoothing in Cross Entropy Loss")
         parser.add_argument("--T_max", default=1000, type=int, help="T_max in Cosine LR scheduler")
         parser.add_argument("--pretrained", default=False, type=bool, help="use pretrained model")
         parser.add_argument("--aug_mode", default='standard', type=str, help="mode of data augmentation")
+        parser.add_argument("--scheduler_mode", default=None, type=str, help="mode of LR scheduling")
         parser.add_argument('comment', help="Comment suffix for Tensorboard run.", nargs='?', default='dwlpt')
 
         self.args = parser.parse_args()
@@ -57,18 +57,12 @@ class MultiSiteTrainingApp:
             self.args.site_number = site_number
         if comment is not None:
             self.args.comment = comment
-        if layer is not None:
-            self.args.layer = layer
-        if sub_layer is not None:
-            self.args.sub_layer = sub_layer
         if model_name is not None:
             self.args.model_name = model_name
         if merge_mode is not None:
             self.args.merge_mode = merge_mode
         if optimizer_type is not None:
             self.args.optimizer_type = optimizer_type
-        if use_scheduler is not None:
-            self.args.use_scheduler = use_scheduler
         if label_smoothing is not None:
             self.args.label_smoothing = label_smoothing
         if T_max is not None:
@@ -77,6 +71,8 @@ class MultiSiteTrainingApp:
             self.args.pretrained = pretrained
         if aug_mode is not None:
             self.args.aug_mode = aug_mode
+        if scheduler_mode is not None:
+            self.args.scheduler_mode = scheduler_mode
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         self.use_cuda = torch.cuda.is_available()
         self.device = 'cuda' if self.use_cuda else 'cpu'
@@ -129,25 +125,28 @@ class MultiSiteTrainingApp:
         return optims
     
     def initScheduler(self):
-        if self.args.use_scheduler:
+        if self.args.scheduler_mode == 'cosine':
             schedulers = []
             for optimizer in self.optims:
                 schedulers.append(CosineAnnealingLR(optimizer, T_max=self.args.T_max))
+        elif self.args.scheduler_mode == 'onecycle':
+            schedulers = []
+            images_per_site = 100000 // self.args.site_number
+            for optimizer in self.optims:
+                schedulers.append(OneCycleLR(optimizer, max_lr=0.01, 
+                                             steps_per_epoch=images_per_site,
+                                             epochs=self.args.epochs, div_factor=10,
+                                             final_div_factor=10, pct_start=10/self.args.epochs))
         else:
+            assert self.args.scheduler_mode is None
             schedulers = None
         return schedulers
 
     def initDl(self):
-        trn_dls = []
-        for i in range(self.args.site_number):
-            trn_dls.append(get_trn_loader(self.args.batch_size, site=0, device=self.device))
-
-        val_dl = get_val_loader(self.args.batch_size, device=self.device)
-
         multi_trn_dl = get_multi_site_trn_loader(self.args.batch_size, site_number=self.args.site_number)
         multi_val_dl = get_multi_site_val_loader(self.args.batch_size, site_number=self.args.site_number)
 
-        return trn_dls, val_dl, multi_trn_dl, multi_val_dl
+        return multi_trn_dl, multi_val_dl
 
     def initTensorboardWriters(self):
         if self.trn_writer is None:
@@ -159,23 +158,21 @@ class MultiSiteTrainingApp:
     def main(self):
         log.info("Starting {}, {}".format(type(self).__name__, self.args))
 
-        trn_dls, val_dl, multi_trn_dl, multi_val_dl = self.initDl()
+        multi_trn_dl, multi_val_dl = self.initDl()
 
         saving_criterion = 0
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
             
-            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            if epoch_ndx == 1:
                 log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
                     epoch_ndx,
                     self.args.epochs,
-                    len(trn_dls[0]),
-                    len(val_dl),
+                    len(multi_trn_dl),
+                    len(multi_val_dl),
                     self.args.batch_size,
                     (torch.cuda.device_count() if self.use_cuda else 1),
                 ))
-
-            trnMetrics = torch.zeros(5, len(trn_dls[0]), device=self.device)
 
             trnMetrics = self.doMultiTraining(epoch_ndx, multi_trn_dl)
             self.logMetrics(epoch_ndx, 'trn', trnMetrics)
@@ -186,8 +183,16 @@ class MultiSiteTrainingApp:
                 saving_criterion = max(correct_ratio, saving_criterion)
 
                 self.saveModel('mnist', epoch_ndx, correct_ratio == saving_criterion)
+                log.info(
+                    "E{}/{} trn:{:6.4f} loss val:{:6.4f} loss".format(
+                        epoch_ndx,
+                        self.args.epochs,
+                        trnMetrics[0].mean(),
+                        valMetrics[0].mean()
+                    )
+                )
             
-            if self.schedulers is not None:
+            if self.args.scheduler_mode == 'cosine':
                 for scheduler in self.schedulers:
                     scheduler.step()
                     # log.debug(scheduler.get_last_lr())
@@ -196,41 +201,12 @@ class MultiSiteTrainingApp:
             self.trn_writer.close()
             self.val_writer.close()
 
-    def doTraining(self, epoch_ndx, train_dls):
-        trnMetrics = torch.zeros(5, 2 + self.args.site_number, len(train_dls[0]), device=self.device)
-        for i in range(self.args.site_number):
-
-            self.models[i].train()
-
-            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
-                log.warning('E{} Training on site {} ---/{} starting'.format(epoch_ndx, i,len(train_dls[i])))
-
-            for batch_ndx, batch_tuple in enumerate(train_dls[i]):
-                self.optims[i].zero_grad()
-
-                loss, _ = self.computeBatchLoss(
-                    batch_ndx,
-                    batch_tuple,
-                    trnMetrics[i],
-                    self.models[i],
-                    'trn')
-
-                loss.backward()
-                self.optims[i].step()
-
-            if batch_ndx % 100 == 0:
-                log.info('E{} Training {}/{}'.format(epoch_ndx, batch_ndx, len(train_dls[0])))
-
-        self.totalTrainingSamples_count += len(train_dls[0].dataset)
-
-        return trnMetrics.to('cpu')
-
     def doMultiTraining(self, epoch_ndx, mutli_trn_dl):
         for model in self.models:
             model.train()
         trnMetrics = torch.zeros(2 + self.args.site_number, len(mutli_trn_dl), device=self.device)
 
-        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+        if epoch_ndx == 1:
             log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(mutli_trn_dl)))
 
         for batch_ndx, batch_tuples in enumerate(mutli_trn_dl):
@@ -261,33 +237,15 @@ class MultiSiteTrainingApp:
             elif self.args.merge_mode == 'attention':
                 self.mergeParams(layer_names=['qkv', 'proj'], depth=1)
             elif self.args.merge_mode == 'everything':
-                self.mergeParams(layer_names=['conv0', 'block1', 'block2', 'block3', 'block4', 'lin'], depth=0)
+                if self.args.model_name == 'unet':
+                    self.mergeParams(layer_names=['conv0', 'block1', 'block2', 'block3', 'block4', 'lin'], depth=0)
+                elif self.args.model_name == 'resnet':
+                    self.mergeParams(layer_names=['conv1', 'bn1', 'layer1', 'layer2', 'layer3', 'layer4', 'fc'], depth=1)
             elif self.args.merge_mode == 'notattention':
                 self.mergeParams(layer_names=['conv0', 'conv1', 'skip', 'weight', 'bias', 'norm0', 'norm1'], depth=1)
 
         self.totalTrainingSamples_count += len(mutli_trn_dl.dataset) * self.args.site_number
         return trnMetrics.to('cpu')
-
-    def doValidation(self, epoch_ndx, val_dl):
-        with torch.no_grad():
-            self.models[0].eval()
-            valMetrics = torch.zeros(2 + self.args.site_number, len(val_dl), device=self.device)
-
-            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
-                log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(val_dl)))
-
-            for batch_ndx, batch_tuple in enumerate(val_dl):
-                _, accuracy = self.computeBatchLoss(
-                    batch_ndx,
-                    batch_tuple,
-                    valMetrics,
-                    self.models[0],
-                    'val'
-                )
-                if batch_ndx % 100 == 0:
-                    log.info('E{} Validation {}/{}'.format(epoch_ndx, batch_ndx, len(val_dl)))
-
-        return valMetrics.to('cpu'), accuracy
 
     def doMultiValidation(self, epoch_ndx, multi_val_dl):
         with torch.no_grad():
@@ -295,7 +253,7 @@ class MultiSiteTrainingApp:
             for model in self.models:
                 model.eval()
 
-            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            if epoch_ndx == 1:
                 log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(multi_val_dl)))
 
             for batch_ndx, batch_tuples in enumerate(multi_val_dl):
@@ -309,64 +267,14 @@ class MultiSiteTrainingApp:
 
         return valMetrics.to('cpu'), accuracy
 
-    def computeBatchLoss(self, batch_ndx, batch_tup, metrics, model, mode):
-        batch, labels = batch_tup
-        batch = batch.to(device=self.device, non_blocking=True)
-        labels = labels.to(device=self.device, non_blocking=True)
-
-        if mode == 'trn':
-            angle = random.choice([0, 90, 180, 270])
-            flip = random.choice([True, False])
-            scale = random.uniform(0.9, 1.1)
-            batch = functional.rotate(batch, angle)
-            if flip:
-                batch = functional.hflip(batch)
-            batch = scale * batch
-
-        pred = model(batch)
-        pred_label = torch.argmax(pred, dim=1)
-        loss_fn = nn.CrossEntropyLoss(label_smoothing=self.args.label_smoothing)
-        loss = loss_fn(pred, labels)
-
-        correct_mask = pred_label == labels
-        correct = torch.sum(correct_mask)
-        accuracy = correct / batch.shape[0]
-
-        labels_per_site = 200 // self.args.site_number
-
-        accuracy_per_class = []
-        for i in range(self.args.site_number):
-            class_mask = ((i * labels_per_site) <= labels) & (labels < ((i+1) * labels_per_site))
-            correct_per_class = torch.sum(correct_mask[class_mask])
-            total_per_class = torch.sum(class_mask)
-            accuracy_per_class.append(correct_per_class / total_per_class * 100)
-
-        metrics[0, batch_ndx] = loss.detach()
-        metrics[1, batch_ndx] = accuracy.detach() * 100
-        metrics[2: self.args.site_number + 2, batch_ndx] = torch.Tensor(accuracy_per_class)
-        return loss, accuracy
-
     def computeMultiBatchLoss(self, batch_ndx, batch_tups, metrics, mode):
         batches, labels = batch_tups
         batches = batches.to(device=self.device, non_blocking=True).permute(1, 0, 2, 3, 4)
         labels = labels.to(device=self.device, non_blocking=True).permute(1, 0).flatten()
 
         if mode == 'trn':
-            flip = random.choice([True, False])
-            if flip:
-                for batch in batches:
-                    batch = functional.hflip(batch)
-            if self.args.aug_mode == 'random_resized_crop':
-                resized_crop = RandomResizedCrop(64)
-                for batch in batches:
-                    batch = resized_crop(batch)
-            else:
-                angle = random.choice([0, 90, 180, 270])
-                scale = random.uniform(0.9, 1.1)
-                for batch in batches:
-                    batch = functional.rotate(batch, angle)
-                for batch in batches:
-                    batch = scale * batch
+            assert self.args.aug_mode in ['standard', 'random_resized_crop', 'resnet']
+            batches = aug_image(batches, self.args.aug_mode, multi_training=True)
 
         preds = torch.Tensor([]).to(device=self.device)
         for i in range(self.args.site_number):
@@ -374,15 +282,12 @@ class MultiSiteTrainingApp:
         pred_labels = torch.argmax(preds, dim=1)
         loss_fn = nn.CrossEntropyLoss()
         loss = loss_fn(preds, labels)
-        # preds = preds.view(self.args.site_number, -1, 200)
-        # labels = labels.view(self.args.site_number, -1)
 
         correct_mask = pred_labels == labels
         correct = torch.sum(correct_mask)
         accuracy = correct / batches.shape[1] / self.args.site_number
 
         labels_per_site = 200 // self.args.site_number
-
         accuracy_per_class = []
         for i in range(self.args.site_number):
             class_mask = ((i * labels_per_site) <= labels) & (labels < ((i+1) * labels_per_site))
@@ -402,15 +307,6 @@ class MultiSiteTrainingApp:
         metrics
     ):
         self.initTensorboardWriters()
-
-        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
-            log.info(
-                "E{} {}:{} loss".format(
-                    epoch_ndx,
-                    mode_str,
-                    metrics[0].mean()
-                )
-            )
 
         writer = getattr(self, mode_str + '_writer')
         writer.add_scalar(
@@ -478,37 +374,22 @@ class MultiSiteTrainingApp:
             log.debug("Saved model params to {}".format(best_path))
 
     def mergeParams(self, layer_names=None, depth=None):
-        dicts = []
-        for i in range(self.args.site_number):
-            dicts.append(self.models[i].state_dict())
+        state_dicts = []
+        for model in self.models:
+            state_dicts.append(model.state_dict())
+
         dict_avg = {}
-
         names = self.models[0].named_parameters()
-
         for name, _ in names:
-            if self.args.model_name == 'resnet':
-                layer = name.split('.')[1]
-                sub_layer = name.split('.')[2]
-                if (layer != self.args.layer or sub_layer != self.args.sub_layer) and (layer != 'conv1') and (layer != 'fc'):
-                    dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
-                    for i in range(self.args.site_number):
-                        dict_avg[name] += dicts[i][name]
-                    dict_avg[name] = dict_avg[name] / self.args.site_number
-            if self.args.model_name == 'unet':
-                layer = name.split('.')[depth]
-                if layer in layer_names:
-                    dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
-                    for i in range(self.args.site_number):
-                        dict_avg[name] += dicts[i][name]
-                    dict_avg[name] = dict_avg[name] / self.args.site_number
-            if self.args.model_name == 'swint':
-                dict_avg[name] = torch.zeros(dicts[0][name].shape, device=self.device)
-                for i in range(self.args.site_number):
-                    dict_avg[name] += dicts[i][name]
-                dict_avg[name] = dict_avg[name] / self.args.site_number
+            layer = name.split('.')[depth]
+            if layer in layer_names:
+                dict_avg[name] = torch.zeros(state_dicts[0][name].shape, device=self.device)
+                for state_dict in state_dicts:
+                    dict_avg[name] += state_dict[name]
+                dict_avg[name] = dict_avg[name] / len(state_dicts)
 
-        for i in range(self.args.site_number):
-            self.models[i].load_state_dict(dict_avg, strict=False)
+        for model in self.models:
+            model.load_state_dict(dict_avg, strict=False)
 
 
 if __name__ == '__main__':
