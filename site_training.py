@@ -164,7 +164,7 @@ class MultiSiteTrainingApp:
         validation_cadence = 5
         for epoch_ndx in range(1, self.args.epochs + 1):
             
-            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            if epoch_ndx == 1:
                 log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
                     epoch_ndx,
                     self.args.epochs,
@@ -183,6 +183,14 @@ class MultiSiteTrainingApp:
                 saving_criterion = max(correct_ratio, saving_criterion)
 
                 self.saveModel('mnist', epoch_ndx, correct_ratio == saving_criterion)
+                log.info(
+                    "E{}/{} trn:{:6.4f} loss val:{:6.4f} loss".format(
+                        epoch_ndx,
+                        self.args.epochs,
+                        trnMetrics[0].mean(),
+                        valMetrics[0].mean()
+                    )
+                )
             
             if self.args.scheduler_mode == 'cosine':
                 for scheduler in self.schedulers:
@@ -198,7 +206,7 @@ class MultiSiteTrainingApp:
             model.train()
         trnMetrics = torch.zeros(2 + self.args.site_number, len(mutli_trn_dl), device=self.device)
 
-        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+        if epoch_ndx == 1:
             log.warning('E{} Training ---/{} starting'.format(epoch_ndx, len(mutli_trn_dl)))
 
         for batch_ndx, batch_tuples in enumerate(mutli_trn_dl):
@@ -245,7 +253,7 @@ class MultiSiteTrainingApp:
             for model in self.models:
                 model.eval()
 
-            if epoch_ndx == 1 or epoch_ndx % 10 == 0:
+            if epoch_ndx == 1:
                 log.warning('E{} Validation ---/{} starting'.format(epoch_ndx, len(multi_val_dl)))
 
             for batch_ndx, batch_tuples in enumerate(multi_val_dl):
@@ -299,15 +307,6 @@ class MultiSiteTrainingApp:
         metrics
     ):
         self.initTensorboardWriters()
-
-        if epoch_ndx == 1 or epoch_ndx % 10 == 0:
-            log.info(
-                "E{} {}:{} loss".format(
-                    epoch_ndx,
-                    mode_str,
-                    metrics[0].mean()
-                )
-            )
 
         writer = getattr(self, mode_str + '_writer')
         writer.add_scalar(

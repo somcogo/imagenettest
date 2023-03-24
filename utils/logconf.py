@@ -9,7 +9,7 @@ root_logger.setLevel(logging.DEBUG)
 for handler in list(root_logger.handlers):
     root_logger.removeHandler(handler)
 
-logfmt_str = "%(asctime)s %(levelname)-8s %(name)s:%(funcName)s %(message)s"
+logfmt_str = "%(asctime)s %(levelname)-8s %(message)s"
 formatter = logging.Formatter(logfmt_str)
 
 streamHandler = logging.StreamHandler()
