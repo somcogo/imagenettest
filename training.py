@@ -10,14 +10,11 @@ import torch.nn as nn
 from torch.optim import Adam, AdamW, SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 from torch.utils.tensorboard import SummaryWriter
-import numpy as np
-from torchvision.transforms import functional, RandomResizedCrop, Pad, RandomCrop, RandomHorizontalFlip, RandomRotation, RandomErasing, Compose, RandomApply
 
 from models.model import ResNet18Model, Encoder, TinySwin, SmallSwin, LargeSwin
 from utils.logconf import logging
-from utils.data_loader import get_trn_loader, get_tst_loader, get_val_loader
+from utils.data_loader import get_trn_loader, get_val_loader
 from utils.ops import aug_image
-from utils.losses import SampleLoss
 
 log = logging.getLogger(__name__)
 # log.setLevel(logging.WARN)
