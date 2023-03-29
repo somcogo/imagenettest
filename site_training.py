@@ -222,6 +222,10 @@ class MultiSiteTrainingApp:
             
             for optim in self.optims:
                 optim.step()
+            
+            if self.args.scheduler_mode == 'onecycle':
+                for scheduler in self.schedulers:
+                    scheduler.step()
 
             assert self.args.merge_mode in ['projection', 'second_half', 'first_half', 'last3/4', 'notnorms', 'attention', 'everything', 'notattention']
             if self.args.merge_mode == 'projection':
