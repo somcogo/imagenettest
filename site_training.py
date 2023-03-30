@@ -227,13 +227,22 @@ class MultiSiteTrainingApp:
                 for scheduler in self.schedulers:
                     scheduler.step()
 
-            assert self.args.merge_mode in ['projection', 'second_half', 'first_half', 'last3/4', 'notnorms', 'attention', 'everything', 'notattention']
+            assert self.args.merge_mode in ['projection', 'second_half', 'first_half', 'last3/4', 'notnorms', 'attention', 'everything', 'notattention', 'first_three', 'classifier']
             if self.args.merge_mode == 'projection':
                 self.mergeParams(layer_names=['qkv'], depth=1)
             elif self.args.merge_mode == 'second_half':
                 self.mergeParams(layer_names=['block3', 'block4', 'lin'], depth=0)
             elif self.args.merge_mode == 'first_half':
-                self.mergeParams(layer_names=['block1', 'block2', 'conv0'], depth=0)
+                if self.args.model_name == 'resnet':
+                    self.mergeParams(layer_names=['conv1', 'bn1', 'layer1', 'layer2'], depth=1)
+                elif self.args.model_name == 'unet':
+                    self.mergeParams(layer_names=['block1', 'block2', 'conv0'], depth=0)
+            elif self.args.merge_mode == 'first_three':
+                if self.args.model_name == 'resnet':
+                    self.mergeParams(layer_names=['conv1', 'bn1', 'layer1', 'layer2', 'layer3'], depth=1)
+            elif self.args.merge_mode == 'classifier':
+                if self.args.model_name == 'resnet':
+                    self.mergeParams(layer_names=['conv1', 'bn1', 'layer1', 'layer2', 'layer3', 'layer4'], depth=1)
             elif self.args.merge_mode == 'last3/4':
                 self.mergeParams(layer_names=['block2', 'block3', 'block4', 'lin'], depth=0)
             elif self.args.merge_mode == 'notnorms':
